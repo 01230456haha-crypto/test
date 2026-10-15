@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Luyện Thi Trắc Nghiệm</title>
+<meta name="theme-color" content="#4f5bd5">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%234f5bd5'/%3E%3Cpath d='M18 16h26a2 2 0 012 2v30H20a2 2 0 01-2-2z' fill='none' stroke='white' stroke-width='4' stroke-linejoin='round'/%3E%3C/svg%3E">
+<script>
+  // Áp dụng giao diện sáng/tối ngay từ đầu để không bị nháy màu
+  try{var t=localStorage.getItem('quiz_theme');document.documentElement.dataset.theme=t||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');}catch(e){}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<!-- Thư viện nạp từ CDN: công thức, Excel, Word. Phải đứng TRƯỚC js/app.js -->
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+</head>
+<body>
+<div id="boot" style="padding:28px 20px;font:15px/1.6 system-ui,sans-serif;color:#555;max-width:720px;margin:0 auto">Đang tải trang… Nếu dòng này vẫn còn sau 10 giây thì trang bị lỗi, hãy chụp màn hình gửi lại cho người hỗ trợ.</div>
+<div id="hdr"></div>
+<div id="view"></div>
+<div id="toasts"></div>
+<noscript>Trang web cần bật JavaScript để hoạt động.</noscript>
+<script>
+  // Hiện lỗi ngay trên màn hình (thay vì trang trắng) để dễ tìm nguyên nhân
+  function showErr(m){var b=document.getElementById('boot');if(!b)return;b.style.color='#b00020';
+    b.innerHTML='<b>Trang bị lỗi khi tải. Hãy chụp màn hình này gửi lại:</b><pre style="white-space:pre-wrap;background:#fff3f3;padding:12px;border-radius:8px;margin-top:10px">'+String(m).replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</pre>';}
+  addEventListener('error',function(e){var t=e.target||{};showErr(e.message?e.message+(e.filename?'\n'+e.filename+':'+e.lineno:''):'Không tải được file: '+(t.src||t.href||'?'));},true);
+  addEventListener('unhandledrejection',function(e){showErr((e.reason&&(e.reason.stack||e.reason.message))||e.reason);});
+</script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
