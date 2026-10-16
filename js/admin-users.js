@@ -1,11 +1,11 @@
 // Quản lý lớp học, học viên (tạo tài khoản, duyệt, khóa) và trang theo dõi từng học viên.
 import { auth, db, A, F, createAuthUser, withUserSession } from './fb.js';
 import { go } from './state.js';
-import { esc, toLoginEmail, isUsernameEmail, displayLogin, hueOf, fmtDate, fmtClock, fmtTime, fmtScore, attemptsToRows, byName, KEYS } from './lib.js';
+import { esc, toLoginEmail, isUsernameEmail, displayLogin, hueOf, fmtDate, fmtClock, fmtTime, fmtScore, attemptsToRows, byName, KEYS, audienceOf } from './lib.js';
 import { getAll, getClasses, getQuizzes, getContent, getAttemptsWhere, deleteAttempts } from './data.js';
 import { ic } from './icons.js';
 import { toast, modal, confirmBox, promptBox, loading, empty, avatar, classChip, exportXlsx, safeName, readFile, debounce } from './ui.js';
-import { tabsHtml, isOnline, dot, answeredCount } from './adminui.js';
+import { tabsHtml, isOnline, dot, answeredCount, audienceChips } from './adminui.js';
 
 const STATUS = { active: ['Hoạt động', 'ok'], pending: ['Chờ duyệt', 'warn'], blocked: ['Đã khóa', 'bad'] };
 const statusTag = (s) => { const [t, c] = STATUS[s] || ['—', '']; return `<span class="tag ${c}">${t}</span>`; };
@@ -37,7 +37,7 @@ export async function renderClasses(root) {
   root.innerHTML = `${tabsHtml('classes')}<div class="page-h"><div><h1 class="ptitle">Lớp học</h1><p class="muted">Chia học viên theo lớp để quản lý và giao đề theo từng lớp.</p></div>
     <button class="btn primary" id="new">${ic('plus', 16)} Tạo lớp</button></div>
     ${classes.length ? `<div class="grid class-grid">${classes.map((c) => {
-      const n = stu.filter((u) => u.className === c.name).length, q = quizzes.filter((x) => (x.allowedClasses || []).includes(c.name)).length;
+      const n = stu.filter((u) => u.className === c.name).length, q = quizzes.filter((x) => audienceOf(x) === 'classes' && (x.allowedClasses || []).includes(c.name)).length;
       return `<a class="class-card" href="#/admin/class/${c.id}" style="--h:${hueOf(c.name)}"><div class="cc-ic">${ic('book', 22)}</div><b>${esc(c.name)}</b>
         <div class="cc-m"><span>${ic('users', 14)} ${n} học viên</span><span>${ic('send', 14)} ${q} đề được giao</span></div></a>`;
     }).join('')}</div>` : `<div class="card pad">${empty('book', 'Chưa có lớp nào', 'Bấm "Tạo lớp" để bắt đầu, ví dụ: 12A1, Lớp tối T2-T4.')}</div>`}
@@ -57,7 +57,7 @@ export async function renderClassDetail(root, p, q) {
   const cls = classes.find((c) => c.id === p.id);
   if (!cls) { root.innerHTML = `<div class="card pad">${empty('alert', 'Không tìm thấy lớp')}<a class="btn" href="#/admin/classes">Quay lại</a></div>`; return; }
   const members = users.filter((u) => u.role === 'user' && u.className === cls.name).sort((a, b) => String(a.displayName).localeCompare(String(b.displayName), 'vi'));
-  const assigned = quizzes.filter((x) => (x.allowedClasses || []).includes(cls.name));
+  const assigned = quizzes.filter((x) => audienceOf(x) === 'classes' && (x.allowedClasses || []).includes(cls.name));
   const T = [['students', 'Học viên', 'users'], ['quizzes', 'Đề được giao', 'send'], ['results', 'Kết quả lớp', 'chart']];
   root.innerHTML = `<a class="back" href="#/admin/classes">${ic('left', 16)} Tất cả lớp</a>
     <div class="card pad class-head" style="--h:${hueOf(cls.name)}"><div class="cc-ic lg">${ic('book', 26)}</div><div class="grow"><h1>${esc(cls.name)}</h1><span class="muted">${members.length} học viên · ${assigned.length} đề được giao</span></div>
@@ -70,13 +70,13 @@ export async function renderClassDetail(root, p, q) {
     if (classes.some((c) => c.id !== cls.id && c.name.toLowerCase() === nn.toLowerCase())) return toast('Tên lớp đã tồn tại.', 'error');
     await F.updateDoc(F.doc(db, 'classes', cls.id), { name: nn });
     for (const u of users.filter((u) => u.className === cls.name)) await F.updateDoc(F.doc(db, 'users', u.id), { className: nn });
-    for (const x of assigned) await F.updateDoc(F.doc(db, 'quizzes', x.id), { allowedClasses: x.allowedClasses.map((c) => (c === cls.name ? nn : c)) });
+    for (const x of assigned) await F.updateDoc(F.doc(db, 'quizzes', x.id), { audience: 'classes', allowedClasses: x.allowedClasses.map((c) => (c === cls.name ? nn : c)) });
     toast('Đã đổi tên lớp.', 'success'); go('/admin/class/' + cls.id + '?tab=' + tab);
   };
   root.querySelector('#del').onclick = async () => {
     if (!(await confirmBox(`Xóa lớp "${cls.name}"? Học viên sẽ về trạng thái chưa xếp lớp và lớp bị gỡ khỏi các đề đã giao. Tài khoản học viên không bị xóa.`, 'Xóa lớp', true))) return;
     for (const u of members) await F.updateDoc(F.doc(db, 'users', u.id), { className: '' });
-    for (const x of assigned) await F.updateDoc(F.doc(db, 'quizzes', x.id), { allowedClasses: x.allowedClasses.filter((c) => c !== cls.name) });
+    for (const x of assigned) { const rest = x.allowedClasses.filter((c) => c !== cls.name); await F.updateDoc(F.doc(db, 'quizzes', x.id), { allowedClasses: rest, audience: rest.length ? 'classes' : 'none' }); }
     await F.deleteDoc(F.doc(db, 'classes', cls.id)); toast('Đã xóa lớp.', 'success'); go('/admin/classes');
   };
 
@@ -103,15 +103,16 @@ export async function renderClassDetail(root, p, q) {
     };
   } else if (tab === 'quizzes') {
     const sorted = [...quizzes].sort(byName);
-    const audience = (x) => ((x.allowedClasses || []).length ? x.allowedClasses.map(classChip).join('') : (x.allowedUsers || []).length ? '<span class="tag">Học viên chọn riêng</span>' : '<span class="tag">Tất cả học viên</span>');
-    box.innerHTML = `<div class="note info">${ic('info', 16)}<span>Bật công tắc để <b>giao đề cho lớp ${esc(cls.name)}</b>. Đề chưa giao cho lớp nào thì mọi học viên đều thấy; khi đã giao cho ít nhất một lớp thì chỉ các lớp đó thấy.</span></div>
-      ${sorted.length ? `<div class="card list-card" style="margin-top:12px">${sorted.map((x) => `<label class="row-item"><span class="ri-ic mode-${x.mode}">${ic('file', 20)}</span><div class="ri-b"><b>${esc(x.title)}</b><div class="chips-inline">${audience(x)}</div></div><span class="switch"><input type="checkbox" data-q="${x.id}" ${(x.allowedClasses || []).includes(cls.name) ? 'checked' : ''}><i></i></span></label>`).join('')}</div>` : `<div class="card pad">${empty('file', 'Chưa có đề nào')}</div>`}`;
+    box.innerHTML = `<div class="note info">${ic('info', 16)}<span>Bật công tắc để <b>giao đề cho lớp ${esc(cls.name)}</b>. Đề chưa giao sẽ <b>không hiện</b> với học viên.</span></div>
+      ${sorted.length ? `<div class="card list-card" style="margin-top:12px">${sorted.map((x) => `<label class="row-item"><span class="ri-ic mode-${x.mode}">${ic('file', 20)}</span><div class="ri-b"><b>${esc(x.title)}</b><div class="chips-inline">${audienceChips(x)}</div></div><span class="switch"><input type="checkbox" data-q="${x.id}" ${audienceOf(x) === 'classes' && (x.allowedClasses || []).includes(cls.name) ? 'checked' : ''}><i></i></span></label>`).join('')}</div>` : `<div class="card pad">${empty('file', 'Chưa có đề nào')}</div>`}`;
     box.onchange = async (e) => {
       const i = e.target.closest('[data-q]'); if (!i) return;
-      const x = quizzes.find((z) => z.id === i.dataset.q); const set = new Set(x.allowedClasses || []);
+      const x = quizzes.find((z) => z.id === i.dataset.q);
+      const set = new Set(audienceOf(x) === 'classes' ? x.allowedClasses || [] : []); // đề đang giao kiểu khác thì chuyển sang giao theo lớp
       i.checked ? set.add(cls.name) : set.delete(cls.name);
+      const patch = { audience: set.size ? 'classes' : 'none', allowedClasses: [...set], allowedUsers: set.size ? [] : x.allowedUsers || [], guest: false, updatedAt: Date.now() };
       i.disabled = true;
-      try { await F.updateDoc(F.doc(db, 'quizzes', x.id), { allowedClasses: [...set], updatedAt: Date.now() }); x.allowedClasses = [...set]; toast(i.checked ? 'Đã giao đề cho lớp.' : 'Đã gỡ đề khỏi lớp.', 'success'); box.querySelector(`[data-q="${x.id}"]`).closest('.row-item').querySelector('.chips-inline').innerHTML = audience(x); }
+      try { await F.updateDoc(F.doc(db, 'quizzes', x.id), patch); Object.assign(x, patch); toast(i.checked ? 'Đã giao đề cho lớp.' : 'Đã gỡ đề khỏi lớp.', 'success'); i.closest('.row-item').querySelector('.chips-inline').innerHTML = audienceChips(x); }
       catch (err) { toast(err.message, 'error'); i.checked = !i.checked; }
       i.disabled = false;
     };

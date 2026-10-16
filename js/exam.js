@@ -61,7 +61,7 @@ export async function renderExam(root, p) {
   <div class="exam">
     <header class="exam-top">
       <div class="et-l"><b class="et-title">${esc(a.quizTitle)}</b>
-        <div class="et-badges"><span class="tag mode-${a.mode}">${MODES[a.mode]}</span><span class="tag">${a.shuffleQ ? 'Đảo câu hỏi' : 'Giữ thứ tự câu'}</span><span class="tag">${a.shuffleA ? 'Đảo đáp án' : 'Giữ thứ tự đáp án'}</span></div></div>
+</div>
       <div class="et-r">
         ${practice ? `<button class="btn icon ghost" id="snd" title="Bật/tắt âm thanh" aria-label="Bật/tắt âm thanh">${ic(isSoundOn() ? 'volume' : 'mute')}</button>` : ''}
         ${themeBtn()}

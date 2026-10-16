@@ -12,7 +12,8 @@ import { renderQuizEditor } from './admin-quiz.js';
 import * as AU from './admin-users.js';
 import { SITE_NAME } from './config.js';
 
-const hdr = document.getElementById('hdr');
+const rail = document.getElementById('rail');
+const topbar = document.getElementById('topbar');
 const view = document.getElementById('view');
 
 // [mẫu đường dẫn, hàm hiển thị, tuỳ chọn]
@@ -20,7 +21,7 @@ const ROUTES = [
   ['/', S.renderHome], ['/f/:id', S.renderHome], ['/quiz/:id', S.renderQuizStart],
   ['/exam/:id', E.renderExam, { bare: true }], ['/result/:id', E.renderResult],
   ['/history', S.renderHistory], ['/me', S.renderProfile],
-  ['/admin', AD.renderExplorer, { admin: true }], ['/admin/f/:id', AD.renderExplorer, { admin: true }],
+  ['/admin', AD.renderDashboard, { admin: true }], ['/admin/exams', AD.renderExplorer, { admin: true }], ['/admin/f/:id', AD.renderExplorer, { admin: true }],
   ['/admin/quiz/:id', renderQuizEditor, { admin: true }],
   ['/admin/classes', AU.renderClasses, { admin: true }], ['/admin/class/:id', AU.renderClassDetail, { admin: true }],
   ['/admin/users', AU.renderUsers, { admin: true }], ['/admin/user/:id', AU.renderUserDetail, { admin: true }],
@@ -37,19 +38,30 @@ function parseHash() {
   return { path: path.replace(/\/+$/, '') || '/', query };
 }
 
-// ---------- Thanh điều hướng ----------
-function drawHeader(bare) {
-  if (bare || !state.user || !state.profile || ['pending', 'blocked'].includes(state.profile.status)) { hdr.innerHTML = ''; return; }
-  const { path } = parseHash(), guest = isGuest();
-  const links = [['/', 'Trang chủ', 'home', (p) => p === '/' || p.startsWith('/f/') || p.startsWith('/quiz/') || p.startsWith('/result/')]];
-  if (!guest) links.push(['/history', 'Lịch sử', 'clock', (p) => p === '/history']);
-  if (isAdmin()) links.push(['/admin', 'Quản trị', 'shield', (p) => p.startsWith('/admin')]);
-  links.push(['/me', guest ? 'Thoát' : 'Tài khoản', 'user', (p) => p === '/me']);
-  const first = String(state.profile.displayName || '').trim().split(/\s+/).slice(-1)[0] || 'Bạn';
-  hdr.innerHTML = `<header class="app-header"><div class="hd-in">
-    <a class="brand" href="#/"><span class="brand-mark sm">${ic('book', 18)}</span><span>${esc(SITE_NAME)}</span></a>
-    <nav class="nav">${links.map(([h, t, i, on]) => `<a href="#${h}" class="${on(path) ? 'on' : ''}">${ic(i, 19)}<span>${t}</span></a>`).join('')}</nav>
-    <div class="hd-r">${themeBtn()}<a class="me" href="#/me">${avatar(state.profile.displayName, 30)}<span>${esc(first)}</span></a></div></div></header>`;
+// ---------- Khung giao diện: thanh xanh bên trái + thanh trên ----------
+function setShell(on) {
+  document.body.classList.toggle('shell-on', on);
+  if (!on) { rail.innerHTML = ''; topbar.innerHTML = ''; }
+}
+function drawShell(path) {
+  const admin = isAdmin(), guest = isGuest();
+  const items = admin
+    ? [['/admin', 'Trang chủ', 'home', (p) => p === '/admin'],
+       ['/admin/exams', 'Đề thi', 'file', (p) => p.startsWith('/admin/exams') || p.startsWith('/admin/f/') || p.startsWith('/admin/quiz/')],
+       ['/admin/classes', 'Lớp học', 'book', (p) => p.startsWith('/admin/class')],
+       ['/admin/users', 'Học viên', 'users', (p) => p.startsWith('/admin/user')],
+       ['/admin/live', 'Đang làm', 'activity', (p) => p === '/admin/live']]
+    : [['/', 'Lớp học', 'book', (p) => p === '/' || p.startsWith('/quiz/') || p.startsWith('/result/') || p.startsWith('/f/')]]
+        .concat(guest ? [] : [['/history', 'Lịch sử', 'clock', (p) => p === '/history']]);
+  const bottom = admin
+    ? [['/admin/settings', 'Cài đặt', 'settings', (p) => p === '/admin/settings' || p === '/admin/backup']]
+    : [['/me', guest ? 'Thoát' : 'Tài khoản', 'user', (p) => p === '/me']];
+  const link = ([h, t, i, on]) => `<a href="#${h}" class="${on(path) ? 'on' : ''}">${ic(i, 22)}<span>${t}</span></a>`;
+  rail.innerHTML = `<a class="rail-logo" href="#${admin ? '/admin' : '/'}" aria-label="Trang chủ">${ic('book', 26)}</a>
+    <div class="rail-main">${items.map(link).join('')}</div><div class="rail-bot">${bottom.map(link).join('')}</div>`;
+  const role = admin ? 'Giáo viên' : guest ? 'Khách' : 'Học viên';
+  topbar.innerHTML = `<a class="tb-brand" href="#${admin ? '/admin' : '/'}"><span class="brand-mark sm">${ic('book', 18)}</span><span>${esc(SITE_NAME)}</span></a>
+    <div class="tb-r">${themeBtn()}<a class="tb-user" href="#/me">${avatar(state.profile.displayName, 36)}<div><b>${esc(state.profile.displayName || 'Khách')}</b><span>${role}</span></div></a></div>`;
 }
 
 // ---------- Định tuyến ----------
@@ -61,21 +73,22 @@ async function route() {
   view.onclick = view.oninput = view.onchange = null;
   document.body.classList.remove('in-exam');
   view.innerHTML = ''; view.className = 'view container';
-  if (!configured) { hdr.innerHTML = ''; return renderSetup(); }
+  if (!configured) { setShell(false); return renderSetup(); }
   if (!state.ready) return;
   const { path, query } = parseHash();
 
-  if (!state.user) { hdr.innerHTML = ''; view.className = 'view'; return renderLogin(view); }
+  if (!state.user) { setShell(false); view.className = 'view'; return renderLogin(view); }
   if (!state.profile) return;
-  if (['pending', 'blocked'].includes(state.profile.status)) { hdr.innerHTML = ''; view.className = 'view'; return renderGate(view, state.profile.status); }
+  if (['pending', 'blocked'].includes(state.profile.status)) { setShell(false); view.className = 'view'; return renderGate(view, state.profile.status); }
   if (path === '/login') { location.replace('#/'); return; }
 
   let params = {}, r = null;
   for (const x of ROUTES) { const m = path.match(x.re); if (m) { r = x; x.names.forEach((n, i) => (params[n] = decodeURIComponent(m[i + 1]))); break; } }
-  if (!r) { drawHeader(false); view.innerHTML = `<div class="card pad">${empty('alert', 'Không tìm thấy trang')}<a class="btn" href="#/">Về trang chủ</a></div>`; return; }
+  if (!r) { setShell(true); drawShell(path); view.innerHTML = `<div class="card pad">${empty('alert', 'Không tìm thấy trang')}<a class="btn" href="#/">Về trang chủ</a></div>`; return; }
   if (r.opt.admin && !isAdmin()) { location.replace('#/'); return; }
 
-  drawHeader(!!r.opt.bare);
+  setShell(!r.opt.bare);
+  if (!r.opt.bare) drawShell(path);
   if (r.opt.bare) view.className = 'view bare';
   view.classList.add('anim');
   try {
@@ -123,6 +136,8 @@ hooks.boot = async (u) => {
       } catch (e) { state.flash = authError(e); await A.signOut(auth); return; }
     }
     startPresence();
+    // Giáo viên vừa đăng nhập thì vào thẳng trang chủ giáo viên
+    if (state.profile.role === 'admin' && ['', '#', '#/', '#/login'].includes(location.hash)) location.replace('#/admin');
   }
   state.ready = true; route();
 };

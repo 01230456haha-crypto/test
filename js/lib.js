@@ -179,11 +179,24 @@ export function grade(questions, answers) {
 
 // ---------- Quyền & lịch ----------
 const norm = (s) => String(s || '').trim().toLowerCase();
+/** Đề đang giao cho ai: none (chưa giao) | all | classes | students. Đề cũ chưa có trường này: để trống = tất cả. */
+export function audienceOf(q) {
+  if (q.audience) return q.audience;
+  if ((q.allowedClasses || []).length || (q.allowedUsers || []).length) return 'classes';
+  return 'all';
+}
+export const AUDIENCE_LABEL = { none: 'Chưa giao', all: 'Tất cả mọi người', classes: 'Theo lớp', students: 'Theo học viên' };
+export const isOn = (v) => v === true || v === 'always'; // bật đảo câu/đáp án (tương thích đề cũ)
 export function canSee(q, profile, uid) {
   if (q.hidden) return false;
   if (profile?.role === 'admin') return true;
-  const us = q.allowedUsers || [], cs = (q.allowedClasses || []).map(norm);
-  if (!us.length && !cs.length) return true;
+  if (profile?.role === 'guest') return q.guest === true;
+  const a = audienceOf(q);
+  if (a === 'none') return false;
+  if (a === 'all') return true;
+  const us = q.allowedUsers || [];
+  if (a === 'students') return us.includes(uid);
+  const cs = (q.allowedClasses || []).map(norm);
   return us.includes(uid) || (!!profile?.className && cs.includes(norm(profile.className)));
 }
 export function quizAccess(q, now, used) {
