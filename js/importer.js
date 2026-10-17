@@ -1,5 +1,5 @@
 // Đọc file câu hỏi: Excel / CSV / JSON / Word (.docx) / văn bản.
-import { rowsToQuestions, parseQuestionText, questionsToRows, questionsToWordHtml, sampleQuestions, HEADERS } from './lib.js';
+import { rowsToQuestions, parseQuestionText, htmlToQuestionText, questionsToRows, questionsToWordHtml, sampleQuestions, HEADERS } from './lib.js';
 import { readFile, downloadBlob, exportXlsx, safeName } from './ui.js';
 
 export async function parseFile(file) {
@@ -15,8 +15,9 @@ export async function parseFile(file) {
   }
   if (ext === 'docx') {
     if (!window.mammoth) throw new Error('Thư viện đọc Word chưa tải xong (kiểm tra mạng).');
-    const r = await mammoth.extractRawText({ arrayBuffer: await readFile(file) });
-    return parseQuestionText(r.value);
+    // convertToHtml giữ được chữ GẠCH CHÂN → đáp án đúng; các dòng có 2 đáp án (A. … B. …) cũng được tách
+    const r = await mammoth.convertToHtml({ arrayBuffer: await readFile(file) }, { styleMap: ['u => u'] });
+    return parseQuestionText(htmlToQuestionText(r.value));
   }
   if (['txt', 'md'].includes(ext)) return parseQuestionText(await readFile(file, 'text'));
   throw new Error('Chưa hỗ trợ định dạng .' + ext + ' (dùng .xlsx, .csv, .json, .docx hoặc .txt).');

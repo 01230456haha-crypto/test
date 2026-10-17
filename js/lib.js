@@ -73,7 +73,7 @@ export function finalize(items) {
     const ans = normalizeAnswer(it.ans);
     if (!q) return errors.push(`${label}: thiếu nội dung câu hỏi`);
     if (filled.length < 2) return errors.push(`${label}: cần ít nhất 2 đáp án`);
-    if (!ans) return errors.push(`${label}: thiếu hoặc sai đáp án đúng`);
+    if (!ans) return errors.push(`${label}: chưa có đáp án đúng (trong Word hãy gạch chân chữ cái đáp án đúng, hoặc thêm dòng "Đáp án: A")`);
     if (!o[ans]) return errors.push(`${label}: đáp án ${ans} đang để trống`);
     let id = sanitizeId(it.id) || 'q' + (questions.length + 1);
     const base = id; let n = 2;
@@ -93,31 +93,60 @@ export function rowsToQuestions(rows) {
   })));
 }
 
+/** Tách một dòng có nhiều đáp án ("A. xxx   B. yyy") thành từng đáp án. Dòng phải bắt đầu bằng nhãn A/B/C/D. */
+function splitOptions(line) {
+  const re = /(^|\s)(\*?)([A-Da-d])[.)]\s*/g; const hits = []; let m;
+  while ((m = re.exec(line))) hits.push({ start: m.index + m[1].length, end: re.lastIndex, key: m[3].toUpperCase(), star: m[2] === '*' });
+  if (!hits.length || hits[0].start !== line.search(/\S/)) return null;
+  const chain = [hits[0]]; // chỉ giữ chuỗi liên tiếp A, B, C, D
+  for (const h of hits.slice(1)) if (h.key.charCodeAt(0) === chain[chain.length - 1].key.charCodeAt(0) + 1) chain.push(h);
+  return chain.map((h, i) => ({ key: h.key, star: h.star, text: line.slice(h.end, i + 1 < chain.length ? chain[i + 1].start : line.length).trim() }));
+}
+
+/** HTML từ Word (mammoth) → văn bản. Chữ cái đáp án được GẠCH CHÂN sẽ thành đáp án đúng (*A.). */
+export function htmlToQuestionText(html) {
+  const dec = (t) => t.replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+  let h = String(html || '').replace(/<u>([\s\S]*?)<\/u>/gi, (m, inner) => {
+    const t = inner.replace(/<[^>]+>/g, '');
+    return /^\s*[A-Da-d]\s*[.)]/.test(t) ? '*' + t.replace(/^\s+/, '') : t;
+  });
+  h = h.replace(/<\/(p|li|tr|h\d|div)>/gi, '\n').replace(/<br\s*\/?>/gi, '\n').replace(/<\/(td|th)>/gi, '\t').replace(/<[^>]+>/g, '');
+  return dec(h);
+}
+
 /** Phân tích văn bản dán từ Word: "Câu 1: … / A. … / Đáp án: B / Giải thích: …" */
 export function parseQuestionText(text) {
-  const out = []; let cur = null, field = null;
+  const out = []; let cur = null, field = null; const keyPairs = [];
   const reQ = /^\s*(?:câu|cau|question)\s*\d+\s*[:.)\-]?\s*(.*)$/i;
   const reNum = /^\s*\d+\s*[.)]\s+(.*)$/;
-  const reOpt = /^\s*(\*?)\s*([A-Da-d])\s*[.)]\s*(.*)$/;
   const reAns = /^\s*(?:đáp án|dap an|đ\/a|answer)(?:\s*đúng)?\s*[:：]?\s*(.*)$/i;
-  const reExp = /^\s*(?:giải thích|giai thich|lời giải|loi giai|explanation)\s*[:：]?\s*(.*)$/i;
+  const reExp = /^\s*(?:giải thích|giai thich|lời giải|loi giai|hướng dẫn giải|explanation)\s*[:：]?\s*(.*)$/i;
+  const rePart = /^\s*PH[ẦA]N\s+[IVXLC\d]+\b/i;
+  const lines = String(text || '').replace(/\r/g, '').split('\n');
+  const hasPrefix = lines.some((l) => reQ.test(l));
   const start = (t) => { cur = { q: t, A: '', B: '', C: '', D: '', ans: '', exp: '' }; out.push(cur); field = 'q'; };
-  for (const raw of String(text || '').replace(/\r/g, '').split('\n')) {
+  for (const raw of lines) {
     const line = raw.trim();
     if (!line) continue;
     let m;
+    if (rePart.test(line)) { cur = null; field = null; continue; } // tiêu đề phần: bỏ qua
+    if (/đáp án|dap an|answer/i.test(line)) { // bảng đáp án cuối đề: "Đáp án: 1.A 2.B 3.C ..."
+      const ps = [...line.matchAll(/(\d{1,3})\s*[.\-:)]?\s*([A-Da-d])(?![A-Za-z\u00C0-\u1EF9])/g)];
+      if (ps.length >= 3) { ps.forEach((p) => keyPairs.push([+p[1], p[2].toUpperCase()])); continue; }
+    }
     if (cur && (m = line.match(reExp))) { cur.exp = m[1]; field = 'exp'; continue; }
     if (cur && (m = line.match(reAns))) { cur.ans = normalizeAnswer(m[1]); field = 'ans'; continue; }
-    if (cur && (m = line.match(reOpt))) {
-      const k = m[2].toUpperCase(); cur[k] = m[3]; field = k;
-      if (m[1] === '*') cur.ans = k;
-      continue;
+    if (cur) {
+      const opts = splitOptions(line);
+      if (opts) { opts.forEach((o) => { cur[o.key] = o.text; if (o.star) cur.ans = o.key; }); field = opts[opts.length - 1].key; continue; }
     }
     if ((m = line.match(reQ))) { start(m[1]); continue; }
-    if ((m = line.match(reNum))) { start(m[1]); continue; }
-    if (!cur || field === 'ans') { start(line); continue; } // dòng thường sau đáp án = câu mới không có tiền tố
+    if ((m = line.match(reNum)) && (!hasPrefix || (cur && cur.ans && field === 'ans'))) { start(m[1]); continue; }
+    if (!cur) { if (!hasPrefix) start(line); continue; } // trước câu đầu tiên: bỏ qua lời dẫn nếu đề có "Câu N"
+    if (field === 'ans') { if (!hasPrefix) start(line); continue; }
     cur[field] = (cur[field] ? cur[field] + '\n' : '') + line; // dòng nối tiếp
   }
+  keyPairs.forEach(([n, a]) => { if (out[n - 1] && !out[n - 1].ans) out[n - 1].ans = a; });
   return finalize(out);
 }
 

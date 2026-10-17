@@ -48,7 +48,7 @@ export function descendantIds(folders, id) {
   return ids;
 }
 export const DEFAULT_QUIZ = {
-  description: '', minutes: 30, mode: 'step', shuffleQ: false, shuffleA: false,
+  description: '', minutes: 0, mode: 'practice', shuffleQ: false, shuffleA: false,
   lockReview: false, hidden: false, guest: false, openAt: null, closeAt: null, maxAttempts: 0, passScore: 5,
   audience: 'none', // chưa giao: học viên chưa thấy cho đến khi giáo viên giao bài
   allowedUsers: [], allowedClasses: [], count: 0,

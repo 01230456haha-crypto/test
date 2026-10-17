@@ -97,8 +97,8 @@ export async function renderQuizStart(root, p) {
     <div class="card pad narrow start">
       <h1>${esc(quiz.title)}</h1>${quiz.description ? `<p class="muted pre center-t">${esc(quiz.description)}</p>` : ''}
       <div class="info-list">${info('clock', 'Thời gian làm bài', quiz.minutes > 0 ? quiz.minutes + ' phút' : 'Không giới hạn')}${info('list', 'Số lượng câu hỏi', quiz.count || 0)}${info('file', 'Loại đề', practice ? 'Luyện tập' : 'Kiểm tra')}${left !== null ? info('refresh', 'Số lần làm còn lại', left) : ''}${quiz.openAt || quiz.closeAt ? info('clock', 'Thời gian vào thi', timeText(quiz)) : ''}</div>
-      ${running ? `<a class="btn primary lg block" href="#/exam/${running.id}">${ic('play', 18)} Tiếp tục bài đang làm</a>`
-        : acc.ok ? `<button class="btn primary lg block" id="start">${ic('play', 18)} ${practice ? 'Bắt đầu luyện tập' : 'Bắt đầu làm bài'}</button>`
+      ${running ? `<a class="btn cta lg block" href="#/exam/${running.id}">${ic('play', 18)} Tiếp tục bài đang làm</a>`
+        : acc.ok ? `<button class="btn cta lg block" id="start">${ic('play', 18)} ${practice ? 'Bắt đầu luyện tập' : 'Bắt đầu làm bài'}</button>`
         : `<div class="note warn" style="margin:0">${ic('alert', 16)}<span>${esc(acc.reason)}</span></div>`}
     </div>${histBlock}`;
   toggleHist();

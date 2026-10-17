@@ -15,7 +15,7 @@ export { store };
 export const currentTheme = () => document.documentElement.dataset.theme || 'light';
 export function applyTheme(t) {
   document.documentElement.dataset.theme = t;
-  document.querySelector('meta[name=theme-color]')?.setAttribute('content', t === 'dark' ? '#12152b' : '#4f5bd5');
+  document.querySelector('meta[name=theme-color]')?.setAttribute('content', t === 'dark' ? '#0f0b1f' : '#7c3aed');
   $$('[data-theme-toggle]').forEach((b) => (b.innerHTML = ic(t === 'dark' ? 'sun' : 'moon')));
 }
 export function initTheme() {

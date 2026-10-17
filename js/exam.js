@@ -2,6 +2,7 @@
 import { db, F } from './fb.js';
 import { state, go, isAdmin } from './state.js';
 import { esc, KEYS, MODES, grade, fmtTime, fmtDate, fmtScore, canSee } from './lib.js';
+import { confirmBox } from './ui.js';
 import { getContent, getQuiz } from './data.js';
 import { ic } from './icons.js';
 import { toast, modal, loading, empty, renderMath, beep, isSoundOn, setSound, store, themeBtn } from './ui.js';
@@ -48,8 +49,9 @@ export async function renderExam(root, p) {
   };
   const practice = a.mode === 'practice', scroll = a.mode === 'scroll';
   const lk = 'quiz_att_' + a.id;
+  const ZOOMS = [0.9, 1, 1.15, 1.3, 1.5];
+  let zi = Math.max(0, Math.min(ZOOMS.length - 1, +(store.get('quiz_zoom') ?? 1)));
 
-  // Trạng thái trong bộ nhớ + khôi phục bản lưu cục bộ nếu máy chủ thiếu
   const S = { answers: { ...(a.answers || {}) }, marked: new Set(a.marked || []), cur: Math.min(a.cur || 0, n - 1) };
   try {
     const loc = JSON.parse(store.get(lk) || 'null');
@@ -58,27 +60,30 @@ export async function renderExam(root, p) {
 
   document.body.classList.add('in-exam');
   root.innerHTML = `
-  <div class="exam">
+  <div class="exam" id="exam" style="--z:${ZOOMS[zi]}">
     <header class="exam-top">
-      <div class="et-l"><b class="et-title">${esc(a.quizTitle)}</b>
-</div>
+      <button class="btn" id="back" aria-label="Quay lại">${ic('left', 16)}<span class="hide-m">Quay lại</span></button>
+      <div class="et-c"><b>${esc(a.quizTitle)}</b><span>Thí sinh: ${esc(a.userName || state.profile?.displayName || '')}</span></div>
       <div class="et-r">
-        ${practice ? `<button class="btn icon ghost" id="snd" title="Bật/tắt âm thanh" aria-label="Bật/tắt âm thanh">${ic(isSoundOn() ? 'volume' : 'mute')}</button>` : ''}
-        ${themeBtn()}
         <div class="timer" id="timer">${ic('clock', 16)}<span id="tv">--:--</span></div>
-        <button class="btn ghost m-only" id="gridBtn">${ic('grid', 16)}</button>
-        <button class="btn primary" id="submit">${practice ? 'Kết thúc' : 'Nộp bài'}</button>
+        <button class="tool d-only" id="zout" title="Thu nhỏ chữ" aria-label="Thu nhỏ chữ">${ic('zoomout', 18)}</button>
+        <button class="tool d-only" id="zin" title="Phóng to chữ" aria-label="Phóng to chữ">${ic('zoomin', 18)}</button>
+        ${practice ? `<button class="tool" id="snd" title="Bật/tắt âm thanh" aria-label="Bật/tắt âm thanh">${ic(isSoundOn() ? 'volume' : 'mute', 18)}</button>` : ''}
+        <button class="tool d-only" id="full" title="Toàn màn hình" aria-label="Toàn màn hình">${ic('expand', 18)}</button>
+        ${themeBtn()}
       </div>
     </header>
     <div class="progress"><i id="bar"></i></div>
-    <div class="exam-body"><main id="main"></main><aside id="side" class="exam-side"></aside></div>
-    <div class="sheet-bg" id="sheetBg"></div>
+    ${store.get('quiz_hint_off') || scroll ? '' : `<div class="hint-bar d-only" id="hint"><b>Phím tắt:</b><span><kbd>1</kbd> Chọn A</span><span><kbd>2</kbd> Chọn B</span><span><kbd>3</kbd> Chọn C</span><span><kbd>4</kbd> Chọn D</span><span><kbd>Enter</kbd> Câu tiếp theo</span><span><kbd>←</kbd><kbd>→</kbd> Đổi câu</span><button class="btn icon ghost sm" id="hintx" aria-label="Ẩn">${ic('x', 15)}</button></div>`}
+    <main class="exam-main" id="main"></main>
+    <footer class="exam-bottom" id="bottom"></footer>
+    <div class="cheer" id="cheer"></div>
   </div>`;
   const $ = (s) => root.querySelector(s);
-  const main = $('#main'), side = $('#side');
-  let submitting = false, warned = false, lastFail = 0, timerT, hbT;
+  const main = $('#main');
+  let submitting = false, warned = false, lastFail = 0, timerT, hbT, cheerT;
 
-  // ---------- Hiển thị một câu ----------
+  // ---------- Một câu hỏi ----------
   function qHtml(i) {
     const id = order[i], q = byId[id], keys = optKeys(id), chosen = S.answers[id];
     const locked = practice && chosen;
@@ -92,54 +97,75 @@ export async function renderExam(root, p) {
     const explain = locked ? `<div class="explain ${right ? 'ok' : 'no'}"><b>${right ? ic('check', 15) + ' Chính xác!' : ic('x', 15) + ' Chưa đúng — đáp án đúng là ' + letter(keys.indexOf(q.ans))}</b>${q.exp ? `<div class="pre">${esc(q.exp)}</div>` : ''}</div>` : '';
     const mk = S.marked.has(id);
     return `<article class="qcard" id="qc-${i}"><div class="qhead"><span class="qno">Câu ${i + 1}<small>/${n}</small></span>
-      <button class="flag ${mk ? 'on' : ''}" data-act="mark" data-i="${i}">${ic('flag', 15)} ${mk ? 'Đã đánh dấu' : 'Đánh dấu xem lại'}</button></div>
-      <div class="qtext">${esc(q.q)}</div><div class="opts">${opts}</div>${explain}</article>`;
+      <button class="flag ${mk ? 'on' : ''}" data-act="mark" data-i="${i}">${ic('flag', 15)} ${mk ? 'Đã đánh dấu' : 'Đánh dấu'}</button></div>
+      <div class="qtext">${esc(q.q)}</div><div class="pick-hint">Chọn một đáp án đúng</div><div class="opts">${opts}</div>${explain}</article>`;
   }
-  const navHtml = () => `<div class="qnav"><button class="btn" data-act="prev" ${S.cur === 0 ? 'disabled' : ''}>${ic('left', 16)} Câu trước</button>
-    <span class="muted">${S.cur + 1} / ${n}</span>
-    ${S.cur === n - 1 ? `<button class="btn primary" data-act="finish">${practice ? 'Kết thúc' : 'Nộp bài'}</button>` : `<button class="btn primary" data-act="next">Câu sau ${ic('right', 16)}</button>`}</div>`;
-
   function drawAll() {
-    if (scroll) { main.innerHTML = order.map((_, i) => qHtml(i)).join(''); }
+    if (scroll) main.innerHTML = order.map((_, i) => qHtml(i)).join('');
     else drawSingle(0);
-    renderMath(main); drawGrid(); updateBar();
+    renderMath(main); drawBottom(); updateBar();
   }
   function drawSingle(dir) {
-    main.innerHTML = qHtml(S.cur) + navHtml();
+    main.innerHTML = qHtml(S.cur);
     main.querySelector('.qcard').classList.add(dir > 0 ? 'in-next' : dir < 0 ? 'in-prev' : 'in-fade');
-    renderMath(main);
-    main.scrollTo?.(0, 0); window.scrollTo({ top: 0 });
+    renderMath(main); window.scrollTo({ top: 0 });
   }
   function redrawCard(i) {
     const el = main.querySelector('#qc-' + i); if (!el) return;
-    el.outerHTML = qHtml(i);
-    renderMath(main.querySelector('#qc-' + i));
-    if (!scroll) { const nav = main.querySelector('.qnav'); if (nav) nav.outerHTML = navHtml(); }
+    el.outerHTML = qHtml(i); renderMath(main.querySelector('#qc-' + i));
   }
-  function updateBar() { $('#bar').style.width = (Object.keys(S.answers).filter((id) => byId[id]).length / n) * 100 + '%'; }
+  const doneCount = () => Object.keys(S.answers).filter((id) => byId[id]).length;
+  function updateBar() { $('#bar').style.width = (doneCount() / n) * 100 + '%'; }
 
-  // ---------- Bảng câu hỏi (QuestionGrid) ----------
-  function drawGrid() {
-    const done = Object.keys(S.answers).filter((id) => byId[id]).length;
-    side.innerHTML = `<div class="grid-box"><div class="gb-h"><b>Bảng câu hỏi</b><button class="btn icon ghost sm m-only" id="gridClose" aria-label="Đóng">${ic('x', 16)}</button></div>
-      <div class="gb-stat"><span>Đã làm <b>${done}</b>/${n}</span><span>Đánh dấu <b>${S.marked.size}</b></span></div>
-      <div class="qgrid">${order.map((id, i) => {
-        let c = 'qn';
-        if (S.answers[id]) { c += ' done'; if (practice) c += S.answers[id] === byId[id].ans ? ' ok' : ' no'; }
-        if (S.marked.has(id)) c += ' flag';
-        if (i === S.cur) c += ' cur';
-        return `<button class="${c}" data-go="${i}">${i + 1}</button>`;
-      }).join('')}</div>
-      <div class="legend"><span><i class="lg none"></i>Chưa làm</span><span><i class="lg done"></i>Đã chọn</span><span><i class="lg flag"></i>Đánh dấu</span>${practice ? '<span><i class="lg no"></i>Sai</span>' : ''}</div></div>`;
+  // ---------- Thanh dưới: Bắt đầu lại · Câu x/N · chấm tiến độ · Câu tiếp theo ----------
+  function drawBottom() {
+    const last = S.cur === n - 1;
+    const dots = !scroll && n <= 15 ? `<span class="dots d-only">${order.map((id, i) => {
+      let c = '';
+      if (S.answers[id] !== undefined) c = practice ? (S.answers[id] === byId[id].ans ? 'ok' : 'no') : 'done';
+      if (i === S.cur) c += ' cur';
+      return `<i class="${c}"></i>`;
+    }).join('')}</span>` : '';
+    $('#bottom').innerHTML = `<div class="eb-l">${practice ? `<button class="btn ghost" id="restart">${ic('refresh', 16)}<span class="hide-m">Bắt đầu lại</span></button>` : ''}${scroll ? '' : `<button class="btn" data-act="prev" ${S.cur === 0 ? 'disabled' : ''} aria-label="Câu trước">${ic('left', 16)}</button>`}</div>
+      <div class="eb-c"><button class="qcount" id="qlist">${ic('list', 18)} ${scroll ? `Đã làm ${doneCount()}/${n}` : `Câu ${S.cur + 1}/${n}`}</button>${dots}</div>
+      <div class="eb-r">${scroll || last ? `<button class="btn cta lg" data-act="finish">${practice ? 'Kết thúc' : 'Nộp bài'}</button>` : `<button class="btn primary lg" data-act="next"><span class="hide-m">Câu tiếp theo</span><span class="only-m">Tiếp</span> ${ic('right', 16)}</button>`}</div>`;
   }
-  const sheet = (open) => { side.classList.toggle('open', open); $('#sheetBg').classList.toggle('open', open); };
 
+  // ---------- Danh sách câu hỏi (cửa sổ) ----------
+  async function openList() {
+    const cells = order.map((id, i) => {
+      let c = 'qn';
+      if (S.answers[id] !== undefined) { c += ' done'; if (practice) c += S.answers[id] === byId[id].ans ? ' ok' : ' no'; }
+      if (S.marked.has(id)) c += ' flag';
+      if (i === S.cur && !scroll) c += ' cur';
+      return `<button class="${c}" data-go="${i}">${i + 1}</button>`;
+    }).join('');
+    const v = await modal({
+      title: 'Danh sách câu hỏi', wide: true, okText: practice ? 'Kết thúc' : 'Nộp bài', cancelText: 'Đóng',
+      html: `<div class="gb-stat"><span>Đã làm <b>${doneCount()}</b>/${n}</span><span>Đánh dấu <b>${S.marked.size}</b></span></div><div class="qgrid">${cells}</div>
+        <div class="legend"><span><i class="lgd"></i>Chưa làm</span><span><i class="lgd done"></i>Đã chọn</span><span><i class="lgd flag"></i>Đánh dấu</span>${practice ? '<span><i class="lgd ok"></i>Đúng</span><span><i class="lgd no"></i>Sai</span>' : ''}</div>`,
+      onOpen: (box) => box.addEventListener('click', (e) => { const g = e.target.closest('[data-go]'); if (g) { box.close(null); goTo(+g.dataset.go); } }),
+    });
+    if (v) askSubmit();
+  }
   function goTo(i) {
     i = Math.max(0, Math.min(n - 1, i));
     const dir = i - S.cur; S.cur = i;
-    if (scroll) { document.getElementById('qc-' + i)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+    if (scroll) document.getElementById('qc-' + i)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     else drawSingle(dir);
-    drawGrid(); sheet(false);
+    drawBottom();
+  }
+
+  // ---------- Lời khích lệ (luyện tập) ----------
+  const GOOD = [['Làm tốt lắm', 'Hãy giữ vững phong độ. Tiến lên'], ['Chính xác!', 'Bạn đang làm rất tốt'], ['Tuyệt vời', 'Cứ thế phát huy nhé']];
+  const BAD = [['Chưa đúng', 'Đọc lời giải rồi làm tiếp nhé'], ['Đừng nản', 'Sai một câu để nhớ lâu hơn']];
+  function cheer(ok) {
+    const pool = ok ? GOOD : BAD, m = pool[Math.floor(Math.random() * pool.length)];
+    const el = $('#cheer'); if (!el) return;
+    el.className = 'cheer ' + (ok ? 'good' : 'bad');
+    el.innerHTML = `<span class="ch-ic">${ic(ok ? 'star' : 'sparkle', 26)}</span><div><b>${m[0]}</b><span>${m[1]}</span></div>`;
+    requestAnimationFrame(() => el.classList.add('show'));
+    clearTimeout(cheerT); cheerT = setTimeout(() => el.classList.remove('show'), 2400);
   }
 
   // ---------- Lưu ----------
@@ -155,15 +181,21 @@ export async function renderExam(root, p) {
     const same = !practice && S.answers[id] === k; // bấm lại để bỏ chọn
     if (same) delete S.answers[id]; else S.answers[id] = k;
     S.cur = i;
-    if (practice) beep(k === byId[id].ans ? 'ok' : 'bad');
-    redrawCard(i); drawGrid(); updateBar();
+    if (practice) { const ok = k === byId[id].ans; beep(ok ? 'ok' : 'bad'); cheer(ok); }
+    redrawCard(i); drawBottom(); updateBar();
+    if (practice) requestAnimationFrame(() => main.querySelector('.explain')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })); // điện thoại: cuộn tới lời giải
     persist(same ? { [`answers.${id}`]: F.deleteField() } : { [`answers.${id}`]: k, log: F.arrayUnion({ q: id, k, t: Date.now() }) });
   }
   function toggleMark(i) {
     const id = order[i];
     if (S.marked.has(id)) { S.marked.delete(id); persist({ marked: F.arrayRemove(id) }); }
     else { S.marked.add(id); persist({ marked: F.arrayUnion(id) }); }
-    redrawCard(i); drawGrid();
+    redrawCard(i);
+  }
+  async function restart() {
+    if (!(await confirmBox('Làm lại từ đầu? Các câu đã chọn sẽ bị xóa.', 'Bắt đầu lại'))) return;
+    S.answers = {}; S.marked.clear(); S.cur = 0;
+    persist({ answers: {}, marked: [] }); drawAll();
   }
 
   // ---------- Nộp bài ----------
@@ -194,8 +226,7 @@ export async function renderExam(root, p) {
       title: practice ? 'Kết thúc bài luyện tập' : 'Nộp bài', okText: practice ? 'Kết thúc' : 'Nộp bài', cancelText: 'Làm tiếp',
       html: `<p>Bạn đã làm <b>${n - blank.length}/${n}</b> câu.</p>
         ${blank.length ? `<div class="sub-h">${ic('alert', 15)} Chưa làm (${blank.length}) — bấm số để quay lại</div><div class="chips">${chips(blank, '')}</div>` : `<div class="note ok">${ic('check', 16)}<span>Bạn đã trả lời tất cả các câu.</span></div>`}
-        ${marked.length ? `<div class="sub-h">${ic('flag', 15)} Đã đánh dấu xem lại (${marked.length})</div><div class="chips">${chips(marked, 'flag')}</div>` : ''}
-        <p class="muted s">Sau khi nộp bạn không thể sửa bài.</p>`,
+        ${marked.length ? `<div class="sub-h">${ic('flag', 15)} Đã đánh dấu (${marked.length})</div><div class="chips">${chips(marked, 'flag')}</div>` : ''}`,
       onOpen: (box) => box.addEventListener('click', (e) => { const b = e.target.closest('[data-j]'); if (b) { box.close(null); goTo(+b.dataset.j); } }),
     });
     if (v) doSubmit(false);
@@ -221,26 +252,28 @@ export async function renderExam(root, p) {
   // ---------- Sự kiện ----------
   main.addEventListener('click', (e) => {
     const o = e.target.closest('.opt[data-k]'); if (o) return pick(+o.dataset.i, o.dataset.k);
+    const m = e.target.closest('[data-act=mark]'); if (m) toggleMark(+m.dataset.i);
+  });
+  $('#bottom').addEventListener('click', (e) => {
+    if (e.target.closest('#qlist')) return openList();
+    if (e.target.closest('#restart')) return restart();
     const b = e.target.closest('[data-act]'); if (!b) return;
-    const act = b.dataset.act;
-    if (act === 'mark') toggleMark(+b.dataset.i);
-    else if (act === 'prev') goTo(S.cur - 1);
-    else if (act === 'next') goTo(S.cur + 1);
-    else if (act === 'finish') askSubmit();
+    if (b.dataset.act === 'prev') goTo(S.cur - 1);
+    else if (b.dataset.act === 'next') goTo(S.cur + 1);
+    else if (b.dataset.act === 'finish') askSubmit();
   });
-  side.addEventListener('click', (e) => {
-    const g = e.target.closest('[data-go]'); if (g) return goTo(+g.dataset.go);
-    if (e.target.closest('#gridClose')) sheet(false);
-  });
-  $('#gridBtn').onclick = () => sheet(true);
-  $('#sheetBg').onclick = () => sheet(false);
-  $('#submit').onclick = askSubmit;
-  $('#snd')?.addEventListener('click', (e) => { setSound(!isSoundOn()); e.currentTarget.innerHTML = ic(isSoundOn() ? 'volume' : 'mute'); if (isSoundOn()) beep('ok'); });
+  $('#back').onclick = () => { toast('Bài làm đã được lưu, bạn có thể tiếp tục sau.', 'info'); go('/'); };
+  const setZoom = (d) => { zi = Math.max(0, Math.min(ZOOMS.length - 1, zi + d)); store.set('quiz_zoom', zi); $('#exam').style.setProperty('--z', ZOOMS[zi]); $('#zout').disabled = zi === 0; $('#zin').disabled = zi === ZOOMS.length - 1; };
+  $('#zout').onclick = () => setZoom(-1); $('#zin').onclick = () => setZoom(1); setZoom(0);
+  $('#full').onclick = () => { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen?.().catch(() => {}); };
+  $('#snd')?.addEventListener('click', (e) => { setSound(!isSoundOn()); e.currentTarget.innerHTML = ic(isSoundOn() ? 'volume' : 'mute', 18); if (isSoundOn()) beep('ok'); });
+  $('#hintx')?.addEventListener('click', () => { store.set('quiz_hint_off', '1'); $('#hint').remove(); });
   const onKey = (e) => {
-    if (e.target.closest('input,textarea,select') || document.querySelector('.overlay')) return;
-    if (!scroll && e.key === 'ArrowRight') goTo(S.cur + 1);
-    else if (!scroll && e.key === 'ArrowLeft') goTo(S.cur - 1);
-    else if (/^[a-dA-D1-4]$/.test(e.key) && !scroll) {
+    if (e.target.closest('input,textarea,select') || document.querySelector('.overlay') || scroll) return;
+    if (e.key === 'ArrowRight') goTo(S.cur + 1);
+    else if (e.key === 'ArrowLeft') goTo(S.cur - 1);
+    else if (e.key === 'Enter') { if (S.cur === n - 1) askSubmit(); else goTo(S.cur + 1); }
+    else if (/^[a-dA-D1-4]$/.test(e.key)) {
       const pos = isNaN(e.key) ? e.key.toUpperCase().charCodeAt(0) - 65 : +e.key - 1;
       const k = optKeys(order[S.cur])[pos]; if (k) pick(S.cur, k);
     }
@@ -248,7 +281,7 @@ export async function renderExam(root, p) {
   document.addEventListener('keydown', onKey);
 
   drawAll(); startTimers();
-  return () => { clearInterval(timerT); clearInterval(hbT); document.removeEventListener('keydown', onKey); document.body.classList.remove('in-exam'); };
+  return () => { clearInterval(timerT); clearInterval(hbT); clearTimeout(cheerT); document.removeEventListener('keydown', onKey); document.body.classList.remove('in-exam'); if (document.fullscreenElement) document.exitFullscreen?.(); };
 }
 
 // ====================================================================
@@ -285,8 +318,13 @@ export async function renderResult(root, p) {
     <div class="kpi ok"><b>${a.correct}</b><span>Câu đúng</span></div><div class="kpi no"><b>${a.wrong}</b><span>Câu sai</span></div>
     <div class="kpi"><b>${a.blank}</b><span>Chưa làm</span></div><div class="kpi"><b>${fmtTime(a.durationSec)}</b><span>Thời gian</span></div></div>
   <div id="review"></div>
+  ${own ? '' : `<div class="row center" style="margin-top:18px"><button class="btn danger-o" id="delAtt">${ic('trash', 16)} Xóa bài này (cho thi lại)</button></div>`}
   <div class="row center" style="margin:18px 0 8px">${quiz && own && canSee(quiz, state.profile, state.user.uid) ? `<a class="btn primary" href="#/quiz/${quiz.id}">${ic('refresh', 16)} Làm lại đề này</a>` : ''}<a class="btn" href="${backHref}">${own ? 'Về trang chủ' : 'Quay lại'}</a></div>`;
 
+  root.querySelector('#delAtt')?.addEventListener('click', async () => {
+    if (!(await confirmBox('Xóa bài làm này? Học viên sẽ được làm lại.', 'Xóa', true))) return;
+    await F.deleteDoc(F.doc(db, 'attempts', a.id)); toast('Đã xóa bài làm.', 'success'); go('/admin/user/' + a.uid);
+  });
   const rv = root.querySelector('#review');
   if (locked) { rv.innerHTML = `<div class="note warn" style="margin-top:14px">${ic('lock', 16)}<span>Đề này đã bị khóa hoặc ẩn nên bạn chỉ xem được điểm. Bạn không xem lại được đề và đáp án.</span></div>`; return; }
   const qs = await getContent(a.quizId);
