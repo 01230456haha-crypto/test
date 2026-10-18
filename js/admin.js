@@ -2,10 +2,10 @@
 import { db, F } from './fb.js';
 import { state, go, DEFAULT_SETTINGS } from './state.js';
 import { esc, byName, MODES, audienceOf } from './lib.js';
-import { getFolders, getQuizzes, getContent, saveContent, getAll, getClasses, createQuiz, pathOf, descendantIds } from './data.js';
+import { getFolders, getQuizzes, getContent, getAll, createQuiz, pathOf, descendantIds } from './data.js';
 import { ic } from './icons.js';
-import { toast, modal, confirmBox, promptBox, loading, empty, classChip, downloadBlob, readFile, themeBtn } from './ui.js';
-import { tabsHtml, liveTable, audienceChips, assignModal, applyAssign } from './adminui.js';
+import { toast, modal, confirmBox, promptBox, loading, empty, downloadBlob, readFile } from './ui.js';
+import { tabsHtml, audienceChips, assignModal, applyAssign, copyQuizLink } from './adminui.js';
 
 const nameOf = (t, x) => (t === 'folder' ? x.name : x.title);
 
@@ -39,23 +39,6 @@ async function copyFolder(f, dest, folders, quizzes, name) {
   for (const s of folders.filter((x) => (x.parentId || null) === f.id)) await copyFolder(s, ref.id, folders, quizzes);
 }
 
-// ====================== TRANG CHỦ GIÁO VIÊN ======================
-export async function renderDashboard(root) {
-  root.innerHTML = loading();
-  const [quizzes, classes, users, live] = await Promise.all([getQuizzes(), getClasses(), getAll('users'), F.getDocs(F.query(F.collection(db, 'attempts'), F.where('status', '==', 'in_progress')))]);
-  const stu = users.filter((u) => u.role === 'user');
-  const draft = quizzes.filter((q) => audienceOf(q) === 'none').length;
-  const pending = stu.filter((u) => u.status === 'pending').length;
-  const first = String(state.profile?.displayName || '').trim().split(/\s+/).slice(-1)[0] || 'bạn';
-  const tile = (href, icon, title, sub) => `<a class="tile" href="#${href}"><span class="tile-ic">${ic(icon, 26)}</span><b>${title}</b><span class="muted">${sub}</span></a>`;
-  root.innerHTML = `<section class="banner"><div><h1>Chào mừng trở lại, ${esc(first)}</h1><p>Quản lý lớp học và đề thi của bạn một cách hiệu quả</p></div></section>
-    ${draft || pending ? `<div class="todo">${draft ? `<a class="note warn" href="#/admin/exams">${ic('lock', 16)}<span><b>${draft}</b> đề chưa giao nên học viên chưa thấy. Bấm để vào giao bài.</span></a>` : ''}${pending ? `<a class="note info" href="#/admin/users">${ic('clock', 16)}<span><b>${pending}</b> tài khoản đang chờ duyệt.</span></a>` : ''}</div>` : ''}
-    <h3 class="sec">Quản lý học tập</h3>
-    <div class="tiles">${tile('/admin/exams', 'file', 'Đề thi', quizzes.length + ' đề')}${tile('/admin/classes', 'book', 'Quản lý lớp', classes.length + ' lớp')}${tile('/admin/users', 'users', 'Học viên', stu.length + ' tài khoản')}${tile('/admin/live', 'activity', 'Đang làm bài', live.size + ' người')}</div>
-    <h3 class="sec">Hệ thống</h3>
-    <div class="tiles">${tile('/admin/settings', 'settings', 'Cài đặt đăng nhập', 'Mở, cần duyệt hoặc đóng đăng ký')}${tile('/admin/backup', 'db', 'Sao lưu & khôi phục', 'Lưu dữ liệu ra file')}${tile('/', 'eye', 'Xem như học viên', 'Kiểm tra giao diện học viên')}</div>`;
-}
-
 // ====================== QUẢN LÝ THƯ MỤC & ĐỀ ======================
 export async function renderExplorer(root, p) {
   const fid = p.id || null;
@@ -87,6 +70,7 @@ export async function renderExplorer(root, p) {
     root.innerHTML = `<div class="page-h"><div><h1 class="ptitle">${here ? esc(here.name) : 'Đề thi'}</h1>
         <div class="crumbs">${ic('home', 15)}<a href="#/admin/exams">Tất cả</a>${crumbs.map((c) => `<span>/</span><a href="#/admin/f/${c.id}">${esc(c.name)}</a>`).join('')}</div></div>
         <div class="row"><button class="btn" id="newFolder">${ic('folder', 16)} Thư mục mới</button><button class="btn primary" id="newQuiz">${ic('plus', 16)} Tạo đề mới</button></div></div>
+      ${quizzes.some((q) => audienceOf(q) === 'none') ? `<div class="note warn" style="margin-top:0">${ic('lock', 16)}<span><b>${quizzes.filter((q) => audienceOf(q) === 'none').length}</b> đề chưa giao nên học viên chưa thấy. Tick chọn đề rồi bấm <b>Giao bài</b>.</span></div>` : ''}
       <div id="selbar"></div>
       ${subs.length || qs.length ? `<div class="card list-card">
         ${subs.map((f) => `<div class="row-item">${chk('f:' + f.id)}<a class="ri-main" href="#/admin/f/${f.id}"><span class="ri-ic folder">${ic('folder', 20)}</span><div class="ri-b"><b>${esc(f.name)}</b><span class="muted">${folders.filter((x) => x.parentId === f.id).length} thư mục · ${quizzes.filter((q) => q.folderId === f.id).length} đề</span></div></a>
@@ -130,7 +114,7 @@ export async function renderExplorer(root, p) {
 
   async function itemMenu(t, id) {
     const item = (t === 'folder' ? folders : quizzes).find((x) => x.id === id); if (!item) return;
-    const ops = [['open', 'Mở', 'right'], ['assign', 'Giao bài…', 'send'], ['rename', 'Đổi tên', 'edit'], ['move', 'Di chuyển tới…', 'move'], ['copy', 'Sao chép tới…', 'copy'], ['dup', 'Nhân bản tại chỗ', 'copy'], ['del', 'Xóa', 'trash']];
+    const ops = [['open', 'Mở', 'right'], ['assign', 'Giao bài…', 'send'], ['link', 'Sao chép link đề', 'link'], ['rename', 'Đổi tên', 'edit'], ['move', 'Di chuyển tới…', 'move'], ['copy', 'Sao chép tới…', 'copy'], ['dup', 'Nhân bản tại chỗ', 'copy'], ['del', 'Xóa', 'trash']].filter(([k]) => k !== 'link' || t === 'quiz');
     modal({
       title: nameOf(t, item), hideOk: true, cancelText: 'Đóng',
       html: `<div class="stack">${ops.map(([k, n, i]) => `<button class="btn block left ${k === 'del' ? 'danger-o' : ''}" data-op="${k}">${ic(i, 16)} ${n}</button>`).join('')}</div>`,
@@ -145,6 +129,7 @@ export async function renderExplorer(root, p) {
     const isF = t === 'folder';
     const ex = isF ? descendantIds(folders, item.id) : new Set();
     if (op === 'open') return go(isF ? '/admin/f/' + item.id : '/admin/quiz/' + item.id);
+    if (op === 'link') return copyQuizLink(item.id);
     if (op === 'assign') {
       const ids = quizIdsOf([(isF ? 'f:' : 'q:') + item.id]);
       if (!ids.length) return toast('Thư mục này chưa có đề nào để giao.', 'error');
@@ -180,23 +165,12 @@ export async function renderExplorer(root, p) {
   return () => { root.onclick = null; root.onchange = null; };
 }
 
-// ====================== ĐANG LÀM BÀI (THỜI GIAN THỰC) ======================
-export async function renderLive(root) {
-  let list = [];
-  root.innerHTML = `${tabsHtml('live')}<div class="page-h"><div><h1 class="ptitle">Đang làm bài</h1><p class="muted">Cập nhật theo thời gian thực. Chấm xanh = đang mở trang (có tín hiệu trong 60 giây gần nhất).</p></div></div><div class="card" id="box">${loading()}</div>`;
-  const box = root.querySelector('#box');
-  const draw = () => { box.innerHTML = liveTable(list); };
-  const unsub = F.onSnapshot(F.query(F.collection(db, 'attempts'), F.where('status', '==', 'in_progress')), (s) => { list = s.docs.map((d) => ({ id: d.id, ...d.data() })); draw(); }, (e) => { box.innerHTML = `<div class="note warn">${esc(e.message)}</div>`; });
-  const t = setInterval(draw, 1000);
-  return () => { unsub(); clearInterval(t); };
-}
-
 // ====================== CÀI ĐẶT ĐĂNG NHẬP ======================
 export async function renderSettings(root) {
   const s = { ...DEFAULT_SETTINGS, ...state.settings };
   const sw = (id, title, sub, on) => `<label class="sw-row"><div><b>${title}</b><span class="muted">${sub}</span></div><span class="switch"><input type="checkbox" id="${id}" ${on ? 'checked' : ''}><i></i></span></label>`;
   const modes = [['open', 'Mở', 'Ai cũng tự đăng ký và vào học ngay.', 'users'], ['approval', 'Cần duyệt', 'Đăng ký xong phải chờ bạn duyệt mới làm được đề.', 'clock'], ['closed', 'Đóng', 'Không ai tự tạo được tài khoản. Bạn tự cấp cho học viên.', 'lock']];
-  root.innerHTML = `${tabsHtml('settings')}<div class="page-h"><div><h1 class="ptitle">Cài đặt đăng nhập</h1><p class="muted">Điều chỉnh cách học viên tạo tài khoản và vào hệ thống.</p></div></div>
+  root.innerHTML = `${tabsHtml('settings')}<div class="page-h"><div><h1 class="ptitle">Cài đặt</h1><p class="muted">Cách học viên tạo tài khoản và vào hệ thống.</p></div><a class="btn" href="#/">${ic('eye', 16)} Xem như học viên</a></div>
     <div class="card pad"><h3>Cách tạo tài khoản</h3><div class="mode-cards">${modes.map(([k, t, d, i]) => `<label class="mode-card"><input type="radio" name="rm" value="${k}" ${s.registerMode === k ? 'checked' : ''}><div>${ic(i, 22)}<b>${t}</b><span>${d}</span></div></label>`).join('')}</div></div>
     <div class="card pad" style="margin-top:14px"><h3>Hình thức đăng nhập</h3>
       ${sw('emailReg', 'Cho đăng ký bằng email', 'Tắt nếu bạn chỉ muốn tự cấp tài khoản.', s.emailReg)}

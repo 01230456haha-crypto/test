@@ -49,7 +49,7 @@ export function descendantIds(folders, id) {
 }
 export const DEFAULT_QUIZ = {
   description: '', minutes: 0, mode: 'practice', shuffleQ: false, shuffleA: false,
-  lockReview: false, hidden: false, guest: false, openAt: null, closeAt: null, maxAttempts: 0, passScore: 5,
+  lockReview: false, hidden: false, guest: false, openAt: null, closeAt: null, maxAttempts: 0, passScore: 5, pickCount: 0,
   audience: 'none', // chưa giao: học viên chưa thấy cho đến khi giáo viên giao bài
   allowedUsers: [], allowedClasses: [], count: 0,
 };

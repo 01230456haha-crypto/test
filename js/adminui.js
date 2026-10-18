@@ -3,7 +3,7 @@ import { db, F } from './fb.js';
 import { esc, fmtClock, fmtTime, hueOf, displayLogin, audienceOf } from './lib.js';
 import { ic } from './icons.js';
 import { getClasses, getAll } from './data.js';
-import { modal, avatar, classChip } from './ui.js';
+import { modal, avatar, classChip, toast } from './ui.js';
 
 /** Thanh sao lưu/cài đặt dùng chung (các mục khác đã có thanh bên). */
 export function tabsHtml(active) {
@@ -105,4 +105,11 @@ export async function applyAssign(ids, v, extra = {}) {
       guest: v.audience === 'all' ? !!v.guest : false, updatedAt: Date.now(), ...extra,
     });
   }
+}
+
+/** Sao chép link mở thẳng đề (gửi cho học viên qua Zalo). */
+export async function copyQuizLink(id) {
+  const url = location.origin + location.pathname + '#/quiz/' + id;
+  try { await navigator.clipboard.writeText(url); toast('Đã sao chép link. Gửi cho học viên qua Zalo.', 'success'); }
+  catch (e) { await modal({ title: 'Link đề', html: `<input class="input" readonly value="${esc(url)}" onclick="this.select()"><p class="muted s">Chọn và sao chép link này.</p>`, hideOk: true, cancelText: 'Đóng' }); }
 }

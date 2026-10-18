@@ -1,20 +1,23 @@
-// Trình soạn đề: Câu hỏi · Cài đặt · Giao bài · Kết quả · Đang làm
+// Trình soạn đề (2 tab): Câu hỏi · Giao bài & cài đặt
 import { db, F } from './fb.js';
 import { go } from './state.js';
-import { esc, KEYS, finalize, mergeQuestions, newQuestionId, quizStats, attemptsToRows, fmtDate, fmtTime, fmtScore, toLocalInput, fromLocalInput, audienceOf, isOn } from './lib.js';
-import { getQuiz, getContent, saveContent, getClasses, getAll, getAttemptsWhere, deleteAttempts, pathOf, getFolders } from './data.js';
+import { esc, KEYS, finalize, mergeQuestions, newQuestionId, toLocalInput, fromLocalInput, audienceOf, isOn } from './lib.js';
+import { getQuiz, getContent, saveContent, getClasses, getAll, pathOf, getFolders } from './data.js';
 import { parseFile, exportQuestionsXlsx, exportQuestionsWord, downloadTemplate } from './importer.js';
 import { ic } from './icons.js';
-import { toast, modal, confirmBox, loading, empty, classChip, exportXlsx, safeName, renderMath, debounce } from './ui.js';
-import { liveTable, mountAssignPicker, applyAssign, audienceChips } from './adminui.js';
+import { toast, modal, confirmBox, loading, empty, renderMath } from './ui.js';
+import { mountAssignPicker, applyAssign, audienceChips, copyQuizLink } from './adminui.js';
 
-const TABS = [['questions', 'Câu hỏi', 'list'], ['settings', 'Cài đặt', 'settings'], ['assign', 'Giao bài', 'send'], ['results', 'Kết quả', 'chart'], ['live', 'Đang làm', 'activity']];
+const TABS = [['questions', 'Câu hỏi', 'list'], ['settings', 'Giao bài & cài đặt', 'send']];
 
 export async function renderQuizEditor(root, p, q) {
-  const id = p.id, tab = q.tab || 'questions';
+  const id = p.id;
+  let tab = q.tab || 'questions';
+  if (tab === 'results' || tab === 'live') { location.replace('#/admin/results?quiz=' + id); return; } // kết quả nằm ở trang Kết quả
+  if (tab === 'assign') tab = 'settings';
   root.innerHTML = loading();
   const [quiz, folders] = await Promise.all([getQuiz(id), getFolders()]);
-  if (!quiz) { root.innerHTML = `<div class="card pad">${empty('alert', 'Không tìm thấy đề')}<a class="btn" href="#/admin">Quay lại</a></div>`; return; }
+  if (!quiz) { root.innerHTML = `<div class="card pad">${empty('alert', 'Không tìm thấy đề')}<a class="btn" href="#/admin/exams">Quay lại</a></div>`; return; }
   const back = quiz.folderId ? '#/admin/f/' + quiz.folderId : '#/admin/exams';
   const crumbs = pathOf(folders, quiz.folderId);
 
@@ -23,14 +26,16 @@ export async function renderQuizEditor(root, p, q) {
     <a class="back" href="${back}">${ic('left', 16)} ${crumbs.length ? esc(crumbs[crumbs.length - 1].name) : 'Danh sách đề'}</a>
     <div class="qe-head card pad">
       <div class="qe-t"><span class="qc-ic mode-${quiz.mode} lg">${ic('file', 24)}</span><div><h1>${esc(quiz.title)}</h1>
-        <div class="chips-inline"><span class="tag">${quiz.count || 0} câu</span><span class="tag">${quiz.minutes > 0 ? quiz.minutes + ' phút' : 'Không giới hạn giờ'}</span><span class="tag mode-${quiz.mode}">${kind}</span>${audienceChips(quiz)}${quiz.hidden ? '<span class="tag warn">Đang ẩn</span>' : ''}</div></div></div>
-      ${audienceOf(quiz) === 'none' ? `<div class="note warn" style="margin-bottom:0">${ic('lock', 16)}<span>Đề này <b>chưa giao</b> nên học viên chưa thấy.</span><a class="btn primary sm" href="#/admin/quiz/${id}?tab=assign">${ic('send', 15)} Giao bài ngay</a></div>` : ''}
+        <div class="chips-inline"><span class="tag">${quiz.count || 0} câu</span><span class="tag">${quiz.minutes > 0 ? quiz.minutes + ' phút' : 'Không giới hạn giờ'}</span><span class="tag mode-${quiz.mode}">${kind}</span>${audienceChips(quiz)}${quiz.hidden ? '<span class="tag warn">Đang ẩn</span>' : ''}</div></div>
+        <div class="row qe-act"><button class="btn sm" id="copyLink">${ic('link', 15)} Sao chép link</button><a class="btn sm" href="#/admin/results?quiz=${id}">${ic('chart', 15)} Xem kết quả</a></div></div>
+      ${audienceOf(quiz) === 'none' ? `<div class="note warn" style="margin-bottom:0">${ic('lock', 16)}<span>Đề này <b>chưa giao</b> nên học viên chưa thấy.</span><a class="btn primary sm" href="#/admin/quiz/${id}?tab=settings">${ic('send', 15)} Giao bài ngay</a></div>` : ''}
     </div>
     <nav class="tabs sub">${TABS.map(([k, n, i]) => `<a href="#/admin/quiz/${id}?tab=${k}" class="${k === tab ? 'on' : ''}">${ic(i, 16)}<span>${n}</span></a>`).join('')}</nav>
     <div id="tab"></div>`;
+  root.querySelector('#copyLink').onclick = () => copyQuizLink(id);
   const box = root.querySelector('#tab');
   const ctx = { id, quiz, box, root };
-  const fn = { questions: tabQuestions, settings: tabSettings, assign: tabAssign, results: tabResults, live: tabLive }[tab] || tabQuestions;
+  const fn = { questions: tabQuestions, settings: tabSettings }[tab] || tabQuestions;
   const cleanup = await fn(ctx);
   return () => { root.onclick = null; box.onclick = null; if (typeof cleanup === 'function') cleanup(); };
 }
@@ -145,26 +150,36 @@ function importModal(existing) {
   });
 }
 
-// ====================== TAB: CÀI ĐẶT ======================
+// ====================== TAB: GIAO BÀI & CÀI ĐẶT (một trang) ======================
 async function tabSettings({ id, quiz, box }) {
+  box.innerHTML = loading();
+  const [classes, users] = await Promise.all([getClasses(), getAll('users')]);
+  const students = users.filter((u) => u.role === 'user' && u.status !== 'blocked').sort((a, b) => String(a.displayName).localeCompare(String(b.displayName), 'vi'));
   const sw = (i, t, d, on) => `<label class="sw-row"><div><b>${t}</b><span class="muted">${d}</span></div><span class="switch"><input type="checkbox" id="${i}" ${on ? 'checked' : ''}><i></i></span></label>`;
   const practice = quiz.mode === 'practice', layout = quiz.mode === 'scroll' ? 'scroll' : 'step';
-  const desc = { exam: 'Làm xong nộp bài mới thấy đáp án và điểm. Dùng để kiểm tra.', practice: 'Chọn đáp án xong biết ngay đúng/sai kèm giải thích. Dùng để ôn tập.' };
-  box.innerHTML = `<div class="card pad"><div class="cfg-row"><div><h3 style="margin:0">Loại đề</h3><p class="muted" id="kdesc" style="margin:4px 0 0">${practice ? desc.practice : desc.exam}</p></div>
-      <div class="bigseg"><label><input type="radio" name="kind" value="exam" ${!practice ? 'checked' : ''}><span>Kiểm tra</span></label><label><input type="radio" name="kind" value="practice" ${practice ? 'checked' : ''}><span>Luyện tập</span></label></div></div>
-      <div class="cfg-row ${practice ? 'hide' : ''}" id="layoutRow" style="margin-top:14px"><div><b>Cách hiển thị câu hỏi</b></div>
-      <div class="bigseg sm"><label><input type="radio" name="layout" value="step" ${layout === 'step' ? 'checked' : ''}><span>Từng câu</span></label><label><input type="radio" name="layout" value="scroll" ${layout === 'scroll' ? 'checked' : ''}><span>Tất cả trên một trang</span></label></div></div></div>
-    <div class="card pad" style="margin-top:14px"><h3>Cấu hình chung</h3>
-      <label class="field"><span>Tên đề</span><input class="input" id="title" value="${esc(quiz.title)}"></label>
-      <label class="field"><span>Lời nhắn cho học viên <small>(không bắt buộc)</small></span><textarea class="input" id="desc" rows="2">${esc(quiz.description || '')}</textarea></label>
-      <div class="two"><label class="field"><span>Thời gian làm bài (phút)</span><input class="input" type="number" min="0" id="minutes" value="${quiz.minutes ?? 0}"><small class="muted">Nhập 0 để không giới hạn thời gian</small></label>
-      <label class="field"><span>Điểm đạt (thang 10)</span><input class="input" type="number" min="0" max="10" step="0.5" id="pass" value="${quiz.passScore ?? 5}"></label></div></div>
-    <div class="card pad" style="margin-top:14px"><h3>Tùy chọn</h3>
+  const desc = { exam: 'Làm xong nộp bài mới thấy đáp án và điểm.', practice: 'Chọn xong biết ngay đúng/sai kèm lời giải.' };
+  box.innerHTML = `<div class="card pad"><h3>${ic('send', 18)} Giao đề cho ai?</h3><div id="ap"></div></div>
+    <div class="card pad" style="margin-top:14px"><h3>Cài đặt đề</h3>
+      <div class="cfg-row"><div><b>Loại đề</b><p class="muted" id="kdesc" style="margin:2px 0 0">${practice ? desc.practice : desc.exam}</p></div>
+        <div class="bigseg"><label><input type="radio" name="kind" value="practice" ${practice ? 'checked' : ''}><span>Luyện tập</span></label><label><input type="radio" name="kind" value="exam" ${!practice ? 'checked' : ''}><span>Kiểm tra</span></label></div></div>
+      <div class="cfg-row ${practice ? 'hide' : ''}" id="layoutRow" style="margin-top:12px"><div><b>Cách hiển thị</b></div>
+        <div class="bigseg sm"><label><input type="radio" name="layout" value="step" ${layout === 'step' ? 'checked' : ''}><span>Từng câu</span></label><label><input type="radio" name="layout" value="scroll" ${layout === 'scroll' ? 'checked' : ''}><span>Cả trang</span></label></div></div>
+      <label class="field" style="margin-top:14px"><span>Tên đề</span><input class="input" id="title" value="${esc(quiz.title)}"></label>
+      <div class="two"><label class="field"><span>Thời gian (phút)</span><input class="input" type="number" min="0" id="minutes" value="${quiz.minutes ?? 0}"><small class="muted">0 = không giới hạn</small></label>
+        <label class="field"><span>Số câu mỗi lần làm</span><input class="input" type="number" min="0" id="pick" value="${quiz.pickCount || 0}"><small class="muted">0 = làm hết. Số khác = bốc ngẫu nhiên</small></label></div>
       ${sw('shq', 'Đảo thứ tự câu hỏi', 'Mỗi lần làm, câu hỏi được xáo trộn.', isOn(quiz.shuffleQ))}
-      ${sw('sha', 'Đảo thứ tự đáp án', 'Các đáp án A, B, C, D được xáo trộn trong từng câu.', isOn(quiz.shuffleA))}
-      ${sw('review', 'Cho xem lại đề và đáp án sau khi nộp', 'Tắt thì học viên chỉ thấy điểm.', !quiz.lockReview)}
-      ${sw('hidden', 'Ẩn đề', 'Học viên không thấy đề trong danh sách, chỉ xem được điểm đã làm.', quiz.hidden)}</div>
-    <div class="row" style="margin-top:16px"><button class="btn primary lg" id="save">${ic('save', 16)} Lưu cài đặt</button><button class="btn danger-o" id="del">${ic('trash', 16)} Xóa đề</button></div>`;
+      ${sw('sha', 'Đảo thứ tự đáp án', 'Đáp án A, B, C, D được xáo trộn.', isOn(quiz.shuffleA))}</div>
+    <details class="adv"><summary>${ic('settings', 17)} Nâng cao</summary><div class="adv-b">
+      ${sw('review', 'Cho xem lại đáp án sau khi nộp', 'Tắt thì học viên chỉ thấy điểm.', !quiz.lockReview)}
+      ${sw('hidden', 'Ẩn đề', 'Học viên không thấy đề, chỉ xem được điểm đã làm.', quiz.hidden)}
+      <div class="two" style="margin-top:12px"><label class="field"><span>Điểm đạt (thang 10)</span><input class="input" type="number" min="0" max="10" step="0.5" id="pass" value="${quiz.passScore ?? 5}"></label>
+        <label class="field"><span>Số lần làm tối đa</span><input class="input" type="number" min="0" id="max" value="${quiz.maxAttempts || 0}"><small class="muted">0 = không giới hạn</small></label></div>
+      <div class="two"><label class="field"><span>Mở đề lúc</span><input class="input" type="datetime-local" id="openAt" value="${toLocalInput(quiz.openAt)}"></label>
+        <label class="field"><span>Đóng đề lúc</span><input class="input" type="datetime-local" id="closeAt" value="${toLocalInput(quiz.closeAt)}"></label></div>
+      <label class="field"><span>Lời nhắn cho học viên</span><textarea class="input" id="desc" rows="2">${esc(quiz.description || '')}</textarea></label>
+      <button class="btn danger-o" id="del">${ic('trash', 16)} Xóa đề này</button></div></details>
+    <div class="row" style="margin-top:16px"><button class="btn primary lg" id="save">${ic('save', 16)} Lưu</button></div>`;
+  const picker = mountAssignPicker(box.querySelector('#ap'), { classes, students, value: { audience: audienceOf(quiz), allowedClasses: quiz.allowedClasses, allowedUsers: quiz.allowedUsers, guest: quiz.guest } });
   box.addEventListener('change', (e) => {
     if (e.target.name === 'kind') {
       box.querySelector('#layoutRow').classList.toggle('hide', e.target.value === 'practice');
@@ -174,84 +189,22 @@ async function tabSettings({ id, quiz, box }) {
   box.querySelector('#save').onclick = async (e) => {
     const g = (s) => box.querySelector(s);
     const title = g('#title').value.trim(); if (!title) return toast('Tên đề không được để trống.', 'error');
+    const v = picker.get(), err = picker.check(v); if (err) return toast(err, 'error');
     e.currentTarget.disabled = true;
     try {
       const mode = g('input[name=kind]:checked').value === 'practice' ? 'practice' : g('input[name=layout]:checked').value;
-      await F.updateDoc(F.doc(db, 'quizzes', id), {
-        title, description: g('#desc').value.trim(), minutes: Math.max(0, +g('#minutes').value || 0), passScore: Math.min(10, Math.max(0, +g('#pass').value || 0)),
-        mode, shuffleQ: g('#shq').checked, shuffleA: g('#sha').checked, lockReview: !g('#review').checked, hidden: g('#hidden').checked, updatedAt: Date.now(),
+      await applyAssign([id], v, {
+        title, description: g('#desc').value.trim(), minutes: Math.max(0, +g('#minutes').value || 0), pickCount: Math.max(0, parseInt(g('#pick').value) || 0),
+        passScore: Math.min(10, Math.max(0, +g('#pass').value || 0)), maxAttempts: Math.max(0, parseInt(g('#max').value) || 0),
+        openAt: fromLocalInput(g('#openAt').value), closeAt: fromLocalInput(g('#closeAt').value),
+        mode, shuffleQ: g('#shq').checked, shuffleA: g('#sha').checked, lockReview: !g('#review').checked, hidden: g('#hidden').checked,
       });
-      toast('Đã lưu cài đặt.', 'success'); go('/admin/quiz/' + id + '?tab=settings');
-    } catch (err) { toast(err.message, 'error'); e.currentTarget.disabled = false; }
+      toast(v.audience === 'none' ? 'Đã lưu. Đề đang ở dạng nháp (chưa giao).' : 'Đã lưu và giao bài.', 'success'); go('/admin/quiz/' + id + '?tab=settings');
+    } catch (er) { toast(er.message, 'error'); e.currentTarget.disabled = false; }
   };
   box.querySelector('#del').onclick = async () => {
     if (!(await confirmBox(`Xóa đề "${quiz.title}"? Lịch sử làm bài của học viên vẫn được giữ.`, 'Xóa đề', true))) return;
     await F.deleteDoc(F.doc(db, 'quizzes', id)); await F.deleteDoc(F.doc(db, 'quizContent', id));
     toast('Đã xóa đề.', 'success'); go(quiz.folderId ? '/admin/f/' + quiz.folderId : '/admin/exams');
   };
-}
-
-// ====================== TAB: GIAO BÀI ======================
-async function tabAssign({ id, quiz, box }) {
-  box.innerHTML = loading();
-  const [classes, users] = await Promise.all([getClasses(), getAll('users')]);
-  const students = users.filter((u) => u.role === 'user' && u.status !== 'blocked').sort((a, b) => String(a.displayName).localeCompare(String(b.displayName), 'vi'));
-  box.innerHTML = `<div class="card pad"><h3>${ic('send', 18)} Giao đề này cho ai?</h3><div id="ap"></div></div>
-    <div class="card pad" style="margin-top:14px"><h3>${ic('clock', 18)} Thời gian & số lần làm <small class="muted">(không bắt buộc)</small></h3><div class="two">
-      <label class="field"><span>Mở đề lúc <small>(trống = mở ngay)</small></span><input class="input" type="datetime-local" id="openAt" value="${toLocalInput(quiz.openAt)}"></label>
-      <label class="field"><span>Đóng đề lúc <small>(trống = không đóng)</small></span><input class="input" type="datetime-local" id="closeAt" value="${toLocalInput(quiz.closeAt)}"></label></div>
-      <label class="field"><span>Số lần làm tối đa của mỗi học viên</span><input class="input" type="number" min="0" id="max" value="${quiz.maxAttempts || 0}"><small class="muted">Nhập 0 để không giới hạn</small></label></div>
-    <div class="row" style="margin-top:16px"><button class="btn primary lg" id="save">${ic('send', 16)} Lưu việc giao bài</button></div>`;
-  const picker = mountAssignPicker(box.querySelector('#ap'), { classes, students, value: { audience: audienceOf(quiz), allowedClasses: quiz.allowedClasses, allowedUsers: quiz.allowedUsers, guest: quiz.guest } });
-  box.querySelector('#save').onclick = async (e) => {
-    const v = picker.get(), err = picker.check(v); if (err) return toast(err, 'error');
-    e.currentTarget.disabled = true;
-    try {
-      await applyAssign([id], v, { openAt: fromLocalInput(box.querySelector('#openAt').value), closeAt: fromLocalInput(box.querySelector('#closeAt').value), maxAttempts: Math.max(0, parseInt(box.querySelector('#max').value) || 0) });
-      toast(v.audience === 'none' ? 'Đề đang ở dạng nháp (chưa giao).' : 'Đã giao bài.', 'success'); go('/admin/quiz/' + id + '?tab=assign');
-    } catch (er) { toast(er.message, 'error'); e.currentTarget.disabled = false; }
-  };
-}
-
-// ====================== TAB: KẾT QUẢ ======================
-async function tabResults({ id, quiz, box }) {
-  box.innerHTML = loading();
-  const [atts, qs] = await Promise.all([getAttemptsWhere('quizId', id), getContent(id)]);
-  const classNames = [...new Set(atts.map((a) => a.className).filter(Boolean))].sort();
-  let text = '', cls = '';
-  const stat = () => quizStats(atts.filter((a) => !cls || a.className === cls), qs);
-  function draw() {
-    const s = stat(), max = Math.max(1, ...s.dist);
-    const subs = atts.filter((a) => a.status === 'submitted' && (!cls || a.className === cls) && (a.userName + ' ' + (a.className || '')).toLowerCase().includes(text)).sort((a, b) => b.submittedAt - a.submittedAt);
-    box.innerHTML = `<div class="toolbar"><div class="search grow">${ic('search', 16)}<input class="input" id="t" placeholder="Tìm theo tên học viên…" value="${esc(text)}"></div>
-        <select class="input w-auto" id="c"><option value="">Tất cả lớp</option>${classNames.map((c) => `<option ${c === cls ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
-        <button class="btn" id="exp" ${subs.length ? '' : 'disabled'}>${ic('download', 16)} Xuất Excel</button></div>
-      <div class="kpis"><div class="kpi"><b>${s.n}</b><span>Lượt nộp</span></div><div class="kpi"><b>${s.n ? fmtScore(s.avg) : '—'}</b><span>Điểm trung bình</span></div><div class="kpi ok"><b>${s.n ? Math.round(s.passRate * 100) + '%' : '—'}</b><span>Tỷ lệ đạt</span></div><div class="kpi"><b>${s.ranking.length}</b><span>Học viên đã làm</span></div></div>
-      ${s.n ? `<div class="two-col"><div class="card pad"><h3>Phân bố điểm</h3><div class="hist">${s.dist.map((v, i) => `<div class="hb"><span class="hv">${v || ''}</span><i style="height:${(v / max) * 100}%"></i><em>${i}-${i + 1}</em></div>`).join('')}</div></div>
-        <div class="card pad"><h3>${ic('trophy', 18)} Xếp hạng</h3><ol class="rank">${s.ranking.slice(0, 10).map((a, i) => `<li><span class="rk r${i + 1}">${i + 1}</span><div><b>${esc(a.userName)}</b> ${classChip(a.className)}</div><span class="score big ${a.score >= (a.passScore ?? 5) ? 'good' : 'bad'}">${fmtScore(a.score)}</span></li>`).join('')}</ol></div></div>
-        <div class="card pad" style="margin-top:14px"><h3>${ic('alert', 18)} Câu sai nhiều nhất</h3>${s.wrongTop.length ? `<div class="tablewrap"><table><thead><tr><th>Câu hỏi</th><th>Số lượt sai</th><th>Tỷ lệ</th></tr></thead><tbody>${s.wrongTop.map((w) => `<tr><td class="clamp">${esc(w.q)}</td><td>${w.count}</td><td>${Math.round(w.rate * 100)}%</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Chưa có câu nào bị sai.</p>'}</div>
-        <div class="card" style="margin-top:14px"><div class="tablewrap"><table><thead><tr><th>Học viên</th><th>Lớp</th><th>Điểm</th><th>Đúng/Tổng</th><th>Thời gian</th><th>Nộp lúc</th><th></th></tr></thead><tbody>${subs.map((a) => `<tr><td><a href="#/admin/user/${a.uid}">${esc(a.userName)}</a></td><td>${classChip(a.className)}</td><td><b class="score ${a.score >= (a.passScore ?? 5) ? 'good' : 'bad'}">${fmtScore(a.score)}</b></td><td>${a.correct}/${a.total}</td><td>${fmtTime(a.durationSec)}</td><td>${fmtDate(a.submittedAt)}</td><td class="nowrap"><a class="btn sm" href="#/result/${a.id}">Xem bài</a> <button class="btn icon ghost sm" data-del="${a.id}" title="Xóa lượt này">${ic('trash', 15)}</button></td></tr>`).join('')}</tbody></table></div></div>
-        <div class="row" style="margin-top:12px"><button class="btn danger-o" id="delAll">${ic('trash', 16)} Xóa toàn bộ kết quả của đề này</button></div>`
-      : `<div class="card pad">${empty('chart', 'Chưa có lượt làm nào', 'Khi học viên nộp bài, thống kê sẽ hiện ở đây.')}</div>`}`;
-    const t = box.querySelector('#t'); if (t && document.activeElement === document.body && text) { t.focus(); t.setSelectionRange(text.length, text.length); }
-  }
-  box.addEventListener('input', debounce((e) => { if (e.target.id === 't') { text = e.target.value.toLowerCase(); draw(); const t = box.querySelector('#t'); t.focus(); t.setSelectionRange(t.value.length, t.value.length); } }, 150));
-  box.addEventListener('change', (e) => { if (e.target.id === 'c') { cls = e.target.value; draw(); } });
-  box.onclick = async (e) => {
-    const d = e.target.closest('[data-del]');
-    if (d) { if (!(await confirmBox('Xóa lượt làm này?', 'Xóa', true))) return; await deleteAttempts([{ id: d.dataset.del }]); atts.splice(atts.findIndex((a) => a.id === d.dataset.del), 1); draw(); }
-    else if (e.target.closest('#delAll')) { if (!(await confirmBox('Xóa TOÀN BỘ kết quả của đề này? Không thể khôi phục.', 'Xóa hết', true))) return; await deleteAttempts(atts); atts.length = 0; draw(); toast('Đã xóa.', 'success'); }
-    else if (e.target.closest('#exp')) exportXlsx([{ name: 'Kết quả', rows: attemptsToRows(atts.filter((a) => a.status === 'submitted' && (!cls || a.className === cls))) }], 'ket-qua-' + safeName(quiz.title) + '.xlsx');
-  };
-  draw();
-}
-
-// ====================== TAB: ĐANG LÀM ======================
-async function tabLive({ id, box }) {
-  let list = [];
-  box.innerHTML = `<div class="card" id="lv">${loading()}</div>`;
-  const lv = box.querySelector('#lv'), draw = () => (lv.innerHTML = liveTable(list, { showQuiz: false }));
-  const unsub = F.onSnapshot(F.query(F.collection(db, 'attempts'), F.where('quizId', '==', id)), (s) => { list = s.docs.map((d) => ({ id: d.id, ...d.data() })).filter((a) => a.status === 'in_progress'); draw(); });
-  const t = setInterval(draw, 1000);
-  return () => { unsub(); clearInterval(t); };
 }

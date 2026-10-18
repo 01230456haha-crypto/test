@@ -29,25 +29,11 @@ async function createAccount({ login, password, name, cls }) {
 }
 
 // ====================== LỚP HỌC ======================
-export async function renderClasses(root) {
-  root.innerHTML = tabsHtml('classes') + loading();
-  const [classes, users, quizzes] = await Promise.all([getClasses(), getAll('users'), getQuizzes()]);
-  const stu = users.filter((u) => u.role === 'user');
-  const noClass = stu.filter((u) => !u.className || !classes.some((c) => c.name === u.className)).length;
-  root.innerHTML = `${tabsHtml('classes')}<div class="page-h"><div><h1 class="ptitle">Lớp học</h1><p class="muted">Chia học viên theo lớp để quản lý và giao đề theo từng lớp.</p></div>
-    <button class="btn primary" id="new">${ic('plus', 16)} Tạo lớp</button></div>
-    ${classes.length ? `<div class="grid class-grid">${classes.map((c) => {
-      const n = stu.filter((u) => u.className === c.name).length, q = quizzes.filter((x) => audienceOf(x) === 'classes' && (x.allowedClasses || []).includes(c.name)).length;
-      return `<a class="class-card" href="#/admin/class/${c.id}" style="--h:${hueOf(c.name)}"><div class="cc-ic">${ic('book', 22)}</div><b>${esc(c.name)}</b>
-        <div class="cc-m"><span>${ic('users', 14)} ${n} học viên</span><span>${ic('send', 14)} ${q} đề được giao</span></div></a>`;
-    }).join('')}</div>` : `<div class="card pad">${empty('book', 'Chưa có lớp nào', 'Bấm "Tạo lớp" để bắt đầu, ví dụ: 12A1, Lớp tối T2-T4.')}</div>`}
-    ${noClass ? `<div class="note info" style="margin-top:14px">${ic('info', 16)}<span>Có <b>${noClass}</b> học viên chưa xếp lớp. Vào mục <a href="#/admin/users">Học viên</a> để xếp lớp.</span></div>` : ''}`;
-  root.querySelector('#new').onclick = async () => {
-    const name = await promptBox('Tạo lớp mới', 'Tên lớp', '', 'Tạo lớp'); if (!name) return;
-    if (classes.some((c) => c.name.toLowerCase() === name.toLowerCase())) return toast('Lớp này đã tồn tại.', 'error');
-    await F.addDoc(F.collection(db, 'classes'), { name, createdAt: Date.now() });
-    toast('Đã tạo lớp.', 'success'); go('/admin/classes');
-  };
+async function createClassPrompt(classes) {
+  const name = await promptBox('Tạo lớp mới', 'Tên lớp (ví dụ: 12A1)', '', 'Tạo lớp'); if (!name) return false;
+  if (classes.some((c) => c.name.toLowerCase() === name.toLowerCase())) { toast('Lớp này đã tồn tại.', 'error'); return false; }
+  await F.addDoc(F.collection(db, 'classes'), { name, createdAt: Date.now() });
+  toast('Đã tạo lớp.', 'success'); return true;
 }
 
 export async function renderClassDetail(root, p, q) {
@@ -55,11 +41,11 @@ export async function renderClassDetail(root, p, q) {
   root.innerHTML = loading();
   const [classes, users, quizzes] = await Promise.all([getClasses(), getAll('users'), getQuizzes()]);
   const cls = classes.find((c) => c.id === p.id);
-  if (!cls) { root.innerHTML = `<div class="card pad">${empty('alert', 'Không tìm thấy lớp')}<a class="btn" href="#/admin/classes">Quay lại</a></div>`; return; }
+  if (!cls) { root.innerHTML = `<div class="card pad">${empty('alert', 'Không tìm thấy lớp')}<a class="btn" href="#/admin/users">Quay lại</a></div>`; return; }
   const members = users.filter((u) => u.role === 'user' && u.className === cls.name).sort((a, b) => String(a.displayName).localeCompare(String(b.displayName), 'vi'));
   const assigned = quizzes.filter((x) => audienceOf(x) === 'classes' && (x.allowedClasses || []).includes(cls.name));
   const T = [['students', 'Học viên', 'users'], ['quizzes', 'Đề được giao', 'send'], ['results', 'Kết quả lớp', 'chart']];
-  root.innerHTML = `<a class="back" href="#/admin/classes">${ic('left', 16)} Tất cả lớp</a>
+  root.innerHTML = `<a class="back" href="#/admin/users">${ic('left', 16)} Lớp & học viên</a>
     <div class="card pad class-head" style="--h:${hueOf(cls.name)}"><div class="cc-ic lg">${ic('book', 26)}</div><div class="grow"><h1>${esc(cls.name)}</h1><span class="muted">${members.length} học viên · ${assigned.length} đề được giao</span></div>
       <button class="btn" id="ren">${ic('edit', 16)} Đổi tên</button><button class="btn danger-o" id="del">${ic('trash', 16)} Xóa lớp</button></div>
     <nav class="tabs sub">${T.map(([k, n, i]) => `<a href="#/admin/class/${cls.id}?tab=${k}" class="${k === tab ? 'on' : ''}">${ic(i, 16)}<span>${n}</span></a>`).join('')}</nav><div id="tab"></div>`;
@@ -77,7 +63,7 @@ export async function renderClassDetail(root, p, q) {
     if (!(await confirmBox(`Xóa lớp "${cls.name}"? Học viên sẽ về trạng thái chưa xếp lớp và lớp bị gỡ khỏi các đề đã giao. Tài khoản học viên không bị xóa.`, 'Xóa lớp', true))) return;
     for (const u of members) await F.updateDoc(F.doc(db, 'users', u.id), { className: '' });
     for (const x of assigned) { const rest = x.allowedClasses.filter((c) => c !== cls.name); await F.updateDoc(F.doc(db, 'quizzes', x.id), { allowedClasses: rest, audience: rest.length ? 'classes' : 'none' }); }
-    await F.deleteDoc(F.doc(db, 'classes', cls.id)); toast('Đã xóa lớp.', 'success'); go('/admin/classes');
+    await F.deleteDoc(F.doc(db, 'classes', cls.id)); toast('Đã xóa lớp.', 'success'); go('/admin/users');
   };
 
   if (tab === 'students') {
@@ -199,10 +185,11 @@ export async function renderUsers(root) {
   function draw() {
     const pending = stu().filter((u) => u.status === 'pending');
     const cnt = (c) => stu().filter((u) => (c === '' ? !u.className : u.className === c)).length;
-    root.innerHTML = `${tabsHtml('users')}<div class="page-h"><div><h1 class="ptitle">Học viên</h1><p class="muted">${stu().length} tài khoản</p></div>
-      <div class="row"><button class="btn primary" id="add">${ic('plus', 16)} Thêm tài khoản</button><button class="btn" id="bulk">${ic('upload', 16)} Hàng loạt</button><button class="btn" id="exp">${ic('download', 16)} Xuất lịch sử</button><button class="btn icon" id="ref" title="Làm mới">${ic('refresh', 16)}</button></div></div>
+    root.innerHTML = `${tabsHtml('users')}<div class="page-h"><div><h1 class="ptitle">Lớp &amp; học viên</h1><p class="muted">${classes.length} lớp · ${stu().length} học viên</p></div>
+      <div class="row"><button class="btn primary" id="add">${ic('plus', 16)} Thêm học viên</button><button class="btn" id="bulk">${ic('upload', 16)} Hàng loạt</button><button class="btn" id="newClass">${ic('book', 16)} Tạo lớp</button><button class="btn icon" id="ref" title="Làm mới">${ic('refresh', 16)}</button></div></div>
       ${pending.length ? `<div class="note warn">${ic('clock', 16)}<span><b>${pending.length}</b> tài khoản đang chờ duyệt.</span><button class="btn sm primary" id="apprAll">Duyệt tất cả</button></div>` : ''}
       <div class="pills"><button class="${cls === '*' ? 'on' : ''}" data-c="*">Tất cả <small>${stu().length}</small></button>${classes.map((c) => `<button class="${cls === c.name ? 'on' : ''}" data-c="${esc(c.name)}" style="--h:${hueOf(c.name)}">${esc(c.name)} <small>${cnt(c.name)}</small></button>`).join('')}${cnt('') ? `<button class="${cls === '' ? 'on' : ''}" data-c="">Chưa xếp lớp <small>${cnt('')}</small></button>` : ''}</div>
+      ${(() => { const c = cls !== '*' && cls !== '' ? classes.find((x) => x.name === cls) : null; return c ? `<div class="class-bar"><b>Lớp ${esc(c.name)} · ${cnt(c.name)} học viên</b><a class="btn sm" href="#/admin/class/${c.id}">${ic('send', 15)} Giao đề & kết quả của lớp</a></div>` : ''; })()}
       <div class="toolbar"><div class="search grow">${ic('search', 16)}<input class="input" id="t" placeholder="Tìm theo tên, tên đăng nhập, email…" value="${esc(text)}"></div>
         <select class="input w-auto" id="st"><option value="">Mọi trạng thái</option>${Object.entries(STATUS).map(([k, [t]]) => `<option value="${k}" ${status === k ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
       <div id="tbl">${table()}</div>`;
@@ -215,7 +202,7 @@ export async function renderUsers(root) {
       else if (e.target.closest('#bulk')) { await bulkModal(classes, cls !== '*' ? cls : ''); load(); }
       else if (e.target.closest('#ref')) { root.querySelector('#tbl').innerHTML = loading(); load(); }
       else if (e.target.closest('#apprAll')) { for (const u of users.filter((u) => u.status === 'pending')) await F.updateDoc(F.doc(db, 'users', u.id), { status: 'active' }); toast('Đã duyệt tất cả.', 'success'); load(); }
-      else if (e.target.closest('#exp')) { toast('Đang tải lịch sử…'); const all = await getAll('attempts'); exportXlsx([{ name: 'Lịch sử', rows: attemptsToRows(all.sort((a, b) => b.startedAt - a.startedAt)) }], 'lich-su-lam-bai.xlsx'); }
+      else if (e.target.closest('#newClass')) { if (await createClassPrompt(classes)) load(); }
     } catch (err) { toast(err.message, 'error'); }
   };
   root.oninput = debounce((e) => { if (e.target.id === 't') { text = e.target.value.toLowerCase(); root.querySelector('#tbl').innerHTML = table(); } }, 150);

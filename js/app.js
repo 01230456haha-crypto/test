@@ -10,6 +10,7 @@ import * as E from './exam.js';
 import * as AD from './admin.js';
 import { renderQuizEditor } from './admin-quiz.js';
 import * as AU from './admin-users.js';
+import * as AR from './admin-results.js';
 import { SITE_NAME } from './config.js';
 
 const rail = document.getElementById('rail');
@@ -17,15 +18,17 @@ const topbar = document.getElementById('topbar');
 const view = document.getElementById('view');
 
 // [mẫu đường dẫn, hàm hiển thị, tuỳ chọn]
+const toExams = () => { location.replace('#/admin/exams'); }; // "/admin" cũ → danh sách đề
 const ROUTES = [
   ['/', S.renderHome], ['/f/:id', S.renderHome], ['/quiz/:id', S.renderQuizStart],
   ['/exam/:id', E.renderExam, { bare: true }], ['/result/:id', E.renderResult],
   ['/history', S.renderHistory], ['/me', S.renderProfile],
-  ['/admin', AD.renderDashboard, { admin: true }], ['/admin/exams', AD.renderExplorer, { admin: true }], ['/admin/f/:id', AD.renderExplorer, { admin: true }],
+  ['/admin', toExams, { admin: true }], ['/admin/exams', AD.renderExplorer, { admin: true }], ['/admin/f/:id', AD.renderExplorer, { admin: true }],
   ['/admin/quiz/:id', renderQuizEditor, { admin: true }],
-  ['/admin/classes', AU.renderClasses, { admin: true }], ['/admin/class/:id', AU.renderClassDetail, { admin: true }],
-  ['/admin/users', AU.renderUsers, { admin: true }], ['/admin/user/:id', AU.renderUserDetail, { admin: true }],
-  ['/admin/live', AD.renderLive, { admin: true }], ['/admin/settings', AD.renderSettings, { admin: true }], ['/admin/backup', AD.renderBackup, { admin: true }],
+  ['/admin/users', AU.renderUsers, { admin: true }], ['/admin/classes', AU.renderUsers, { admin: true }],
+  ['/admin/class/:id', AU.renderClassDetail, { admin: true }], ['/admin/user/:id', AU.renderUserDetail, { admin: true }],
+  ['/admin/results', AR.renderResults, { admin: true }], ['/admin/live', AR.renderResults, { admin: true }],
+  ['/admin/settings', AD.renderSettings, { admin: true }], ['/admin/backup', AD.renderBackup, { admin: true }],
 ].map(([pat, fn, opt = {}]) => {
   const names = []; const re = new RegExp('^' + pat.replace(/:(\w+)/g, (_, n) => { names.push(n); return '([^/]+)'; }) + '$');
   return { re, names, fn, opt };
@@ -46,22 +49,22 @@ function setShell(on) {
 function drawShell(path) {
   const admin = isAdmin(), guest = isGuest();
   const items = admin
-    ? [['/admin', 'Trang chủ', 'home', (p) => p === '/admin'],
-       ['/admin/exams', 'Đề thi', 'file', (p) => p.startsWith('/admin/exams') || p.startsWith('/admin/f/') || p.startsWith('/admin/quiz/')],
-       ['/admin/classes', 'Lớp học', 'book', (p) => p.startsWith('/admin/class')],
-       ['/admin/users', 'Học viên', 'users', (p) => p.startsWith('/admin/user')],
-       ['/admin/live', 'Đang làm', 'activity', (p) => p === '/admin/live']]
-    : [['/', 'Lớp học', 'book', (p) => p === '/' || p.startsWith('/quiz/') || p.startsWith('/result/') || p.startsWith('/f/')]]
+    ? [['/admin/exams', 'Đề thi', 'file', (p) => p.startsWith('/admin/exams') || p.startsWith('/admin/f/') || p.startsWith('/admin/quiz/')],
+       ['/admin/users', 'Học viên', 'users', (p) => p.startsWith('/admin/user') || p.startsWith('/admin/class')],
+       ['/admin/results', 'Kết quả', 'chart', (p) => p === '/admin/results' || p === '/admin/live' || p.startsWith('/result/')]]
+    : [['/', 'Đề thi', 'book', (p) => p === '/' || p.startsWith('/quiz/') || p.startsWith('/result/') || p.startsWith('/f/')]]
         .concat(guest ? [] : [['/history', 'Lịch sử', 'clock', (p) => p === '/history']]);
   const bottom = admin
     ? [['/admin/settings', 'Cài đặt', 'settings', (p) => p === '/admin/settings' || p === '/admin/backup']]
     : [['/me', guest ? 'Thoát' : 'Tài khoản', 'user', (p) => p === '/me']];
   const link = ([h, t, i, on]) => `<a href="#${h}" class="${on(path) ? 'on' : ''}">${ic(i, 22)}<span>${t}</span></a>`;
-  rail.innerHTML = `<a class="rail-logo" href="#${admin ? '/admin' : '/'}" aria-label="Trang chủ">${ic('book', 26)}</a>
+  rail.innerHTML = `<a class="rail-logo" href="#${admin ? '/admin/exams' : '/'}" aria-label="Trang chủ">${ic('book', 26)}</a>
     <div class="rail-main">${items.map(link).join('')}</div><div class="rail-bot">${bottom.map(link).join('')}</div>`;
   const role = admin ? 'Giáo viên' : guest ? 'Khách' : 'Học viên';
-  topbar.innerHTML = `<a class="tb-brand" href="#${admin ? '/admin' : '/'}"><span class="brand-mark sm">${ic('book', 18)}</span><span>${esc(SITE_NAME)}</span></a>
-    <div class="tb-r">${themeBtn()}<a class="tb-user" href="#/me">${avatar(state.profile.displayName, 36)}<div><b>${esc(state.profile.displayName || 'Khách')}</b><span>${role}</span></div></a></div>`;
+  const inAdmin = path.startsWith('/admin') || path.startsWith('/result/');
+  const swap = admin ? (inAdmin ? `<a class="btn sm tb-link" href="#/">${ic('eye', 15)} Xem như học viên</a>` : `<a class="btn sm tb-link" href="#/admin/exams">${ic('left', 15)} Về quản trị</a>`) : '';
+  topbar.innerHTML = `<a class="tb-brand" href="#${admin ? '/admin/exams' : '/'}"><span class="brand-mark sm">${ic('book', 18)}</span><span>${esc(SITE_NAME)}</span></a>
+    <div class="tb-r">${swap}${themeBtn()}<a class="tb-user" href="#/me">${avatar(state.profile.displayName, 36)}<div><b>${esc(state.profile.displayName || 'Khách')}</b><span>${role}</span></div></a></div>`;
 }
 
 // ---------- Định tuyến ----------
@@ -137,7 +140,7 @@ hooks.boot = async (u) => {
     }
     startPresence();
     // Giáo viên vừa đăng nhập thì vào thẳng trang chủ giáo viên
-    if (state.profile.role === 'admin' && ['', '#', '#/', '#/login'].includes(location.hash)) location.replace('#/admin');
+    if (state.profile.role === 'admin' && ['', '#', '#/', '#/login'].includes(location.hash)) location.replace('#/admin/exams');
   }
   state.ready = true; route();
 };

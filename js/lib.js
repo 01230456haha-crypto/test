@@ -262,7 +262,7 @@ export const fmtScore = (n) => (Math.round((n || 0) * 100) / 100).toString();
 
 // ---------- Thống kê ----------
 export function quizStats(attempts, questions = []) {
-  const subs = attempts.filter((a) => a.status === 'submitted');
+  const subs = attempts.filter((a) => a.status === 'submitted' && !a.retry); // bài ôn câu sai không tính thống kê
   const n = subs.length, dist = Array(10).fill(0);
   let sum = 0, pass = 0;
   subs.forEach((a) => {

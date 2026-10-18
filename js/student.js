@@ -1,7 +1,7 @@
 // Giao diện học viên: trang chủ, bắt đầu làm đề, lịch sử, tài khoản.
 import { auth, db, A, F } from './fb.js';
 import { state, go, hooks, isGuest, authError } from './state.js';
-import { esc, byName, canSee, quizAccess, fmtDate, fmtTime, fmtScore, buildPlan, displayLogin, audienceOf, isOn } from './lib.js';
+import { esc, byName, canSee, quizAccess, fmtDate, fmtTime, fmtScore, buildPlan, displayLogin, audienceOf, isOn, shuffle } from './lib.js';
 import { getQuizzes, getQuiz, getContent, getAttemptsWhere } from './data.js';
 import { ic } from './icons.js';
 import { toast, modal, loading, empty, avatar, classChip, debounce } from './ui.js';
@@ -20,10 +20,10 @@ export async function renderHome(root) {
   const guest = isGuest(), admin = state.profile.role === 'admin';
   const [quizzes, attempts] = await Promise.all([getQuizzes(guest), myAttempts().catch(() => [])]);
   const vis = quizzes.filter((q) => canSee(q, state.profile, state.user.uid)).sort(byName);
-  const submitted = attempts.filter((a) => a.status === 'submitted');
+  const submitted = attempts.filter((a) => a.status === 'submitted' && !a.retry);
   const running = attempts.filter(stillRunning).sort((a, b) => b.startedAt - a.startedAt);
   const lastOf = (qid) => submitted.filter((a) => a.quizId === qid).sort((a, b) => b.submittedAt - a.submittedAt)[0];
-  const cntOf = (qid) => attempts.filter((a) => a.quizId === qid).length;
+  const cntOf = (qid) => attempts.filter((a) => a.quizId === qid && !a.retry).length;
   const cls = state.profile.className;
 
   // Chia thành các khung: theo lớp của học viên, giao riêng, tự do
@@ -79,7 +79,7 @@ export async function renderQuizStart(root, p) {
   root.innerHTML = loading();
   const quiz = await getQuiz(p.id);
   const all = await myAttempts().catch(() => []);
-  const mine = all.filter((a) => a.quizId === p.id);
+  const mine = all.filter((a) => a.quizId === p.id && !a.retry);
   const done = mine.filter((a) => a.status === 'submitted').sort((a, b) => b.submittedAt - a.submittedAt);
   const running = mine.filter(stillRunning)[0];
   const histBlock = done.length ? `<div class="center"><button class="btn" id="hist">${ic('clock', 16)} Xem lịch sử làm bài</button></div><div id="histList" class="hide"><div class="card list-card" style="margin-top:14px">${done.map(resultRow).join('')}</div></div>` : '';
@@ -96,7 +96,7 @@ export async function renderQuizStart(root, p) {
   root.innerHTML = `<a class="back" href="#/">${ic('left', 16)} Quay lại</a>
     <div class="card pad narrow start">
       <h1>${esc(quiz.title)}</h1>${quiz.description ? `<p class="muted pre center-t">${esc(quiz.description)}</p>` : ''}
-      <div class="info-list">${info('clock', 'Thời gian làm bài', quiz.minutes > 0 ? quiz.minutes + ' phút' : 'Không giới hạn')}${info('list', 'Số lượng câu hỏi', quiz.count || 0)}${info('file', 'Loại đề', practice ? 'Luyện tập' : 'Kiểm tra')}${left !== null ? info('refresh', 'Số lần làm còn lại', left) : ''}${quiz.openAt || quiz.closeAt ? info('clock', 'Thời gian vào thi', timeText(quiz)) : ''}</div>
+      <div class="info-list">${info('clock', 'Thời gian làm bài', quiz.minutes > 0 ? quiz.minutes + ' phút' : 'Không giới hạn')}${info('list', 'Số lượng câu hỏi', quiz.pickCount > 0 && quiz.pickCount < (quiz.count || 0) ? quiz.pickCount : quiz.count || 0)}${info('file', 'Loại đề', practice ? 'Luyện tập' : 'Kiểm tra')}${left !== null ? info('refresh', 'Số lần làm còn lại', left) : ''}${quiz.openAt || quiz.closeAt ? info('clock', 'Thời gian vào thi', timeText(quiz)) : ''}</div>
       ${running ? `<a class="btn cta lg block" href="#/exam/${running.id}">${ic('play', 18)} Tiếp tục bài đang làm</a>`
         : acc.ok ? `<button class="btn cta lg block" id="start">${ic('play', 18)} ${practice ? 'Bắt đầu luyện tập' : 'Bắt đầu làm bài'}</button>`
         : `<div class="note warn" style="margin:0">${ic('alert', 16)}<span>${esc(acc.reason)}</span></div>`}
@@ -108,12 +108,13 @@ export async function renderQuizStart(root, p) {
       const qs = await getContent(quiz.id);
       if (!qs.length) throw new Error('Đề này chưa có câu hỏi.');
       const sq = isOn(quiz.shuffleQ), sa = isOn(quiz.shuffleA);
+      const base = quiz.pickCount > 0 && quiz.pickCount < qs.length ? shuffle(qs).slice(0, quiz.pickCount) : qs; // bốc ngẫu nhiên N câu
       const now = Date.now();
       const ref = await F.addDoc(F.collection(db, 'attempts'), {
         uid: state.user.uid, userName: state.profile.displayName || 'Học viên', className: state.profile.className || '',
         quizId: quiz.id, quizTitle: quiz.title, mode: quiz.mode, status: 'in_progress', startedAt: now,
         minutes: quiz.minutes || 0, deadline: quiz.minutes > 0 ? now + quiz.minutes * 60000 : null, passScore: quiz.passScore ?? 5,
-        plan: buildPlan(qs, sq, sa), answers: {}, marked: [], log: [], cur: 0, total: qs.length, lastSeen: now, shuffleQ: sq, shuffleA: sa,
+        plan: buildPlan(base, sq, sa), subset: base.length < qs.length, answers: {}, marked: [], log: [], cur: 0, total: base.length, lastSeen: now, shuffleQ: sq, shuffleA: sa,
       });
       go('/exam/' + ref.id);
     } catch (err) { toast(err.message, 'error'); btn.disabled = false; }

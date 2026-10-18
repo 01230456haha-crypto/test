@@ -1,7 +1,7 @@
 // Giao diện làm bài (3 dạng) và màn hình kết quả / xem lại.
 import { db, F } from './fb.js';
 import { state, go, isAdmin } from './state.js';
-import { esc, KEYS, MODES, grade, fmtTime, fmtDate, fmtScore, canSee } from './lib.js';
+import { esc, KEYS, MODES, grade, fmtTime, fmtDate, fmtScore, canSee, buildPlan } from './lib.js';
 import { confirmBox } from './ui.js';
 import { getContent, getQuiz } from './data.js';
 import { ic } from './icons.js';
@@ -34,12 +34,13 @@ export async function renderExam(root, p) {
   if (!snap.exists() || snap.data().uid !== state.user.uid) { root.innerHTML = `<div class="card pad">${empty('alert', 'Không tìm thấy bài làm')}</div>`; return; }
   const a = { id: p.id, ...snap.data() };
   if (a.status === 'submitted') { go('/result/' + a.id); return; }
-  const qs = await getContent(a.quizId);
+  let qs = await getContent(a.quizId);
+  if (a.subset) { const ids = new Set(a.plan?.qOrder || []); qs = qs.filter((q) => ids.has(q.id)); } // ôn câu sai hoặc bốc ngẫu nhiên
   if (!qs.length) { root.innerHTML = `<div class="card pad">${empty('alert', 'Đề này chưa có câu hỏi hoặc đã bị xóa')}<a class="btn" href="#/">Về trang chủ</a></div>`; return; }
 
   const byId = Object.fromEntries(qs.map((q) => [q.id, q]));
   const order = (a.plan?.qOrder || []).filter((id) => byId[id]);
-  qs.forEach((q) => { if (!order.includes(q.id)) order.push(q.id); }); // câu mới thêm sau khi bắt đầu
+  if (!a.subset) qs.forEach((q) => { if (!order.includes(q.id)) order.push(q.id); }); // câu mới thêm sau khi bắt đầu
   const n = order.length;
   const optKeys = (id) => {
     const q = byId[id];
@@ -69,12 +70,9 @@ export async function renderExam(root, p) {
         <button class="tool d-only" id="zout" title="Thu nhỏ chữ" aria-label="Thu nhỏ chữ">${ic('zoomout', 18)}</button>
         <button class="tool d-only" id="zin" title="Phóng to chữ" aria-label="Phóng to chữ">${ic('zoomin', 18)}</button>
         ${practice ? `<button class="tool" id="snd" title="Bật/tắt âm thanh" aria-label="Bật/tắt âm thanh">${ic(isSoundOn() ? 'volume' : 'mute', 18)}</button>` : ''}
-        <button class="tool d-only" id="full" title="Toàn màn hình" aria-label="Toàn màn hình">${ic('expand', 18)}</button>
-        ${themeBtn()}
       </div>
     </header>
     <div class="progress"><i id="bar"></i></div>
-    ${store.get('quiz_hint_off') || scroll ? '' : `<div class="hint-bar d-only" id="hint"><b>Phím tắt:</b><span><kbd>1</kbd> Chọn A</span><span><kbd>2</kbd> Chọn B</span><span><kbd>3</kbd> Chọn C</span><span><kbd>4</kbd> Chọn D</span><span><kbd>Enter</kbd> Câu tiếp theo</span><span><kbd>←</kbd><kbd>→</kbd> Đổi câu</span><button class="btn icon ghost sm" id="hintx" aria-label="Ẩn">${ic('x', 15)}</button></div>`}
     <main class="exam-main" id="main"></main>
     <footer class="exam-bottom" id="bottom"></footer>
     <div class="cheer" id="cheer"></div>
@@ -265,9 +263,7 @@ export async function renderExam(root, p) {
   $('#back').onclick = () => { toast('Bài làm đã được lưu, bạn có thể tiếp tục sau.', 'info'); go('/'); };
   const setZoom = (d) => { zi = Math.max(0, Math.min(ZOOMS.length - 1, zi + d)); store.set('quiz_zoom', zi); $('#exam').style.setProperty('--z', ZOOMS[zi]); $('#zout').disabled = zi === 0; $('#zin').disabled = zi === ZOOMS.length - 1; };
   $('#zout').onclick = () => setZoom(-1); $('#zin').onclick = () => setZoom(1); setZoom(0);
-  $('#full').onclick = () => { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen?.().catch(() => {}); };
   $('#snd')?.addEventListener('click', (e) => { setSound(!isSoundOn()); e.currentTarget.innerHTML = ic(isSoundOn() ? 'volume' : 'mute', 18); if (isSoundOn()) beep('ok'); });
-  $('#hintx')?.addEventListener('click', () => { store.set('quiz_hint_off', '1'); $('#hint').remove(); });
   const onKey = (e) => {
     if (e.target.closest('input,textarea,select') || document.querySelector('.overlay') || scroll) return;
     if (e.key === 'ArrowRight') goTo(S.cur + 1);
@@ -281,7 +277,7 @@ export async function renderExam(root, p) {
   document.addEventListener('keydown', onKey);
 
   drawAll(); startTimers();
-  return () => { clearInterval(timerT); clearInterval(hbT); clearTimeout(cheerT); document.removeEventListener('keydown', onKey); document.body.classList.remove('in-exam'); if (document.fullscreenElement) document.exitFullscreen?.(); };
+  return () => { clearInterval(timerT); clearInterval(hbT); clearTimeout(cheerT); document.removeEventListener('keydown', onKey); document.body.classList.remove('in-exam'); };
 }
 
 // ====================================================================
@@ -312,7 +308,8 @@ export async function renderResult(root, p) {
     <div class="res-b"><div class="verdict ${pass ? 'good' : 'bad'}">${ic(pass ? 'trophy' : 'target', 16)} ${pass ? 'Đạt yêu cầu' : 'Chưa đạt'}</div>
       <h1>${esc(a.quizTitle)}</h1>
       ${own ? '' : `<p class="muted">Học viên: <b>${esc(a.userName)}</b> ${a.className ? '· ' + esc(a.className) : ''}</p>`}
-      <p class="muted">Nộp lúc ${fmtDate(a.submittedAt)} · ${MODES[a.mode] || ''}</p></div>
+      <p class="muted">Nộp lúc ${fmtDate(a.submittedAt)} · ${MODES[a.mode] || ''}</p>
+      ${own && !locked && a.wrong > 0 ? `<button class="btn cta" id="retry">${ic('refresh', 16)} Ôn lại ${a.wrong} câu sai</button>` : ''}</div>
   </section>
   <div class="kpis">
     <div class="kpi ok"><b>${a.correct}</b><span>Câu đúng</span></div><div class="kpi no"><b>${a.wrong}</b><span>Câu sai</span></div>
@@ -324,6 +321,23 @@ export async function renderResult(root, p) {
   root.querySelector('#delAtt')?.addEventListener('click', async () => {
     if (!(await confirmBox('Xóa bài làm này? Học viên sẽ được làm lại.', 'Xóa', true))) return;
     await F.deleteDoc(F.doc(db, 'attempts', a.id)); toast('Đã xóa bài làm.', 'success'); go('/admin/user/' + a.uid);
+  });
+  root.querySelector('#retry')?.addEventListener('click', async (ev) => {
+    ev.currentTarget.disabled = true;
+    try {
+      const wrongIds = a.wrongIds || [];
+      const qsAll = await getContent(a.quizId);
+      const base = qsAll.filter((q) => wrongIds.includes(q.id));
+      if (!base.length) throw new Error('Không tìm thấy các câu sai (đề có thể đã bị sửa).');
+      const now = Date.now();
+      const ref = await F.addDoc(F.collection(db, 'attempts'), {
+        uid: state.user.uid, userName: a.userName || state.profile.displayName || 'Học viên', className: a.className || '',
+        quizId: a.quizId, quizTitle: (a.quizTitle || '') + ' (ôn câu sai)', mode: 'practice', status: 'in_progress', startedAt: now,
+        minutes: 0, deadline: null, passScore: a.passScore ?? 5, plan: buildPlan(base, true, false), subset: true, retry: true,
+        answers: {}, marked: [], log: [], cur: 0, total: base.length, lastSeen: now, shuffleQ: true, shuffleA: false,
+      });
+      go('/exam/' + ref.id);
+    } catch (err) { toast(err.message, 'error'); ev.currentTarget.disabled = false; }
   });
   const rv = root.querySelector('#review');
   if (locked) { rv.innerHTML = `<div class="note warn" style="margin-top:14px">${ic('lock', 16)}<span>Đề này đã bị khóa hoặc ẩn nên bạn chỉ xem được điểm. Bạn không xem lại được đề và đáp án.</span></div>`; return; }
