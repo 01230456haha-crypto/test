@@ -11,7 +11,7 @@ export async function createProfile(u, extra = {}) {
   const email = u.email || '';
   const data = {
     email, username: '', displayName: extra.displayName || u.displayName || email.split('@')[0] || 'Học viên',
-    className: extra.className || '', role: 'user',
+    className: extra.className || '', classes: extra.className ? [extra.className] : [], role: 'user',
     status: state.settings.registerMode === 'approval' ? 'pending' : 'active',
     createdAt: Date.now(), provider: extra.provider || 'password',
   };

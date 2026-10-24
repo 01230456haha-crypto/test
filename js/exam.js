@@ -1,7 +1,7 @@
 // Giao diện làm bài (3 dạng) và màn hình kết quả / xem lại.
 import { db, F } from './fb.js';
 import { state, go, isAdmin } from './state.js';
-import { esc, KEYS, MODES, grade, fmtTime, fmtDate, fmtScore, canSee, buildPlan } from './lib.js';
+import { esc, KEYS, MODES, grade, fmtTime, fmtDate, fmtScore, canSee, buildPlan, richText, attemptClasses } from './lib.js';
 import { confirmBox } from './ui.js';
 import { getContent, getQuiz } from './data.js';
 import { ic } from './icons.js';
@@ -17,11 +17,11 @@ export function reviewQuestionHtml(q, idx, keys, chosen) {
     let c = 'opt static';
     if (k === q.ans) c += ' correct'; else if (k === chosen) c += ' wrong';
     const tag = k === q.ans ? '<em class="otag ok">Đáp án đúng</em>' : k === chosen ? '<em class="otag no">Bạn chọn</em>' : '';
-    return `<div class="${c}"><span class="ol">${letter(pos)}</span><span class="ot">${esc(q[k])}</span>${tag}</div>`;
+    return `<div class="${c}"><span class="ol">${letter(pos)}</span><span class="ot rt">${richText(q[k])}</span>${tag}</div>`;
   }).join('');
   return `<article class="qcard review ${status}"><div class="qhead"><span class="qno">Câu ${idx + 1}</span><span class="rstat ${status}">${status === 'ok' ? ic('check', 14) : status === 'no' ? ic('x', 14) : ic('alert', 14)} ${label}</span></div>
-    <div class="qtext">${esc(q.q)}</div><div class="opts">${opts}</div>
-    ${q.exp ? `<div class="explain"><b>${ic('sparkle', 15)} Lời giải</b><div class="pre">${esc(q.exp)}</div></div>` : ''}</article>`;
+    <div class="qtext rt">${richText(q.q)}</div><div class="opts">${opts}</div>
+    ${q.exp ? `<div class="explain"><b>${ic('sparkle', 15)} Lời giải</b><div class="rt">${richText(q.exp)}</div></div>` : ''}</article>`;
 }
 
 // ====================================================================
@@ -53,11 +53,13 @@ export async function renderExam(root, p) {
   const ZOOMS = [0.9, 1, 1.15, 1.3, 1.5];
   let zi = Math.max(0, Math.min(ZOOMS.length - 1, +(store.get('quiz_zoom') ?? 1)));
 
-  const S = { answers: { ...(a.answers || {}) }, marked: new Set(a.marked || []), cur: Math.min(a.cur || 0, n - 1) };
+  // checked = các câu đã bấm "Kiểm tra" (chỉ ở chế độ luyện tập)
+  const S = { answers: { ...(a.answers || {}) }, marked: new Set(a.marked || []), checked: new Set(a.checked || []), cur: Math.min(a.cur || 0, n - 1) };
   try {
     const loc = JSON.parse(store.get(lk) || 'null');
     if (loc?.answers) for (const [k, v] of Object.entries(loc.answers)) if (!(k in S.answers) && byId[k]) S.answers[k] = v;
   } catch (e) { /* bỏ qua */ }
+  if (practice) Object.keys(S.answers).forEach((id) => { if (!byId[id]) S.checked.delete(id); });
 
   document.body.classList.add('in-exam');
   root.innerHTML = `
@@ -69,7 +71,7 @@ export async function renderExam(root, p) {
         <div class="timer" id="timer">${ic('clock', 16)}<span id="tv">--:--</span></div>
         <button class="tool d-only" id="zout" title="Thu nhỏ chữ" aria-label="Thu nhỏ chữ">${ic('zoomout', 18)}</button>
         <button class="tool d-only" id="zin" title="Phóng to chữ" aria-label="Phóng to chữ">${ic('zoomin', 18)}</button>
-        ${practice ? `<button class="tool" id="snd" title="Bật/tắt âm thanh" aria-label="Bật/tắt âm thanh">${ic(isSoundOn() ? 'volume' : 'mute', 18)}</button>` : ''}
+        <button class="tool" id="snd" title="Bật/tắt âm thanh" aria-label="Bật/tắt âm thanh">${ic(isSoundOn() ? 'volume' : 'mute', 18)}</button>
       </div>
     </header>
     <div class="progress"><i id="bar"></i></div>
@@ -80,23 +82,44 @@ export async function renderExam(root, p) {
   const $ = (s) => root.querySelector(s);
   const main = $('#main');
   let submitting = false, warned = false, lastFail = 0, timerT, hbT, cheerT;
+  const isChecked = (id) => practice && S.checked.has(id);
 
   // ---------- Một câu hỏi ----------
+  function explainHtml(id) {
+    const q = byId[id], keys = optKeys(id), ok = S.answers[id] === q.ans;
+    return `<b>${ok ? ic('check', 15) + ' Chính xác!' : ic('x', 15) + ' Chưa đúng — đáp án đúng là ' + letter(keys.indexOf(q.ans))}</b>${q.exp ? `<div class="rt">${richText(q.exp)}</div>` : ''}`;
+  }
   function qHtml(i) {
-    const id = order[i], q = byId[id], keys = optKeys(id), chosen = S.answers[id];
-    const locked = practice && chosen;
+    const id = order[i], q = byId[id], keys = optKeys(id), chosen = S.answers[id], chk = isChecked(id);
     const opts = keys.map((k, pos) => {
       let c = 'opt';
-      if (chosen === k) c += ' sel';
-      if (locked) { if (k === q.ans) c += ' correct'; else if (k === chosen) c += ' wrong'; }
-      return `<button class="${c}" data-i="${i}" data-k="${k}" ${locked ? 'disabled' : ''}><span class="ol">${letter(pos)}</span><span class="ot">${esc(q[k])}</span></button>`;
+      if (chk) { if (k === q.ans) c += ' correct'; else if (k === chosen) c += ' wrong'; }
+      else if (chosen === k) c += ' sel';
+      return `<button class="${c}" data-i="${i}" data-k="${k}" ${chk ? 'disabled' : ''}><span class="ol">${letter(pos)}</span><span class="ot rt">${richText(q[k])}</span></button>`;
     }).join('');
-    const right = chosen === q.ans;
-    const explain = locked ? `<div class="explain ${right ? 'ok' : 'no'}"><b>${right ? ic('check', 15) + ' Chính xác!' : ic('x', 15) + ' Chưa đúng — đáp án đúng là ' + letter(keys.indexOf(q.ans))}</b>${q.exp ? `<div class="pre">${esc(q.exp)}</div>` : ''}</div>` : '';
     const mk = S.marked.has(id);
     return `<article class="qcard" id="qc-${i}"><div class="qhead"><span class="qno">Câu ${i + 1}<small>/${n}</small></span>
       <button class="flag ${mk ? 'on' : ''}" data-act="mark" data-i="${i}">${ic('flag', 15)} ${mk ? 'Đã đánh dấu' : 'Đánh dấu'}</button></div>
-      <div class="qtext">${esc(q.q)}</div><div class="pick-hint">Chọn một đáp án đúng</div><div class="opts">${opts}</div>${explain}</article>`;
+      <div class="qtext rt">${richText(q.q)}</div><div class="pick-hint">Chọn một đáp án đúng</div><div class="opts">${opts}</div>${chk ? `<div class="explain ${S.answers[id] === q.ans ? 'ok' : 'no'}">${explainHtml(id)}</div>` : ''}</article>`;
+  }
+  /** Cập nhật câu hỏi TẠI CHỖ (đổi class, thêm lời giải) — không dựng lại thẻ nên không bị nhảy/giật trang. */
+  function paintCard(i) {
+    const card = document.getElementById('qc-' + i); if (!card) return;
+    const id = order[i], q = byId[id], chosen = S.answers[id], chk = isChecked(id);
+    card.querySelectorAll('.opt').forEach((b) => {
+      const k = b.dataset.k;
+      b.classList.toggle('sel', !chk && chosen === k);
+      b.classList.toggle('correct', chk && k === q.ans);
+      b.classList.toggle('wrong', chk && k === chosen && k !== q.ans);
+      b.disabled = chk;
+    });
+    const mk = S.marked.has(id), fl = card.querySelector('.flag');
+    fl.classList.toggle('on', mk); fl.innerHTML = `${ic('flag', 15)} ${mk ? 'Đã đánh dấu' : 'Đánh dấu'}`;
+    let ex = card.querySelector('.explain');
+    if (chk) {
+      if (!ex) { ex = document.createElement('div'); card.appendChild(ex); }
+      ex.className = 'explain ' + (chosen === q.ans ? 'ok' : 'no'); ex.innerHTML = explainHtml(id); renderMath(ex);
+    } else if (ex) ex.remove();
   }
   function drawAll() {
     if (scroll) main.innerHTML = order.map((_, i) => qHtml(i)).join('');
@@ -108,32 +131,33 @@ export async function renderExam(root, p) {
     main.querySelector('.qcard').classList.add(dir > 0 ? 'in-next' : dir < 0 ? 'in-prev' : 'in-fade');
     renderMath(main); window.scrollTo({ top: 0 });
   }
-  function redrawCard(i) {
-    const el = main.querySelector('#qc-' + i); if (!el) return;
-    el.outerHTML = qHtml(i); renderMath(main.querySelector('#qc-' + i));
-  }
   const doneCount = () => Object.keys(S.answers).filter((id) => byId[id]).length;
   function updateBar() { $('#bar').style.width = (doneCount() / n) * 100 + '%'; }
 
-  // ---------- Thanh dưới: Bắt đầu lại · Câu x/N · chấm tiến độ · Câu tiếp theo ----------
+  // ---------- Thanh dưới ----------
   function drawBottom() {
-    const last = S.cur === n - 1;
-    const dots = !scroll && n <= 15 ? `<span class="dots d-only">${order.map((id, i) => {
+    const last = S.cur === n - 1, id = order[S.cur];
+    const dots = !scroll && n <= 15 ? `<span class="dots d-only">${order.map((x, i) => {
       let c = '';
-      if (S.answers[id] !== undefined) c = practice ? (S.answers[id] === byId[id].ans ? 'ok' : 'no') : 'done';
+      if (S.answers[x] !== undefined) c = isChecked(x) ? (S.answers[x] === byId[x].ans ? 'ok' : 'no') : 'done';
       if (i === S.cur) c += ' cur';
       return `<i class="${c}"></i>`;
     }).join('')}</span>` : '';
+    let right;
+    if (scroll) right = `<button class="btn cta lg" data-act="finish">Nộp bài</button>`;
+    else if (practice && !S.checked.has(id)) right = `<button class="btn cta lg" data-act="check" ${S.answers[id] ? '' : 'disabled'}>Kiểm tra</button>`;
+    else if (last) right = `<button class="btn cta lg" data-act="finish">${practice ? 'Kết thúc' : 'Nộp bài'}</button>`;
+    else right = `<button class="btn primary lg" data-act="next"><span class="hide-m">Câu tiếp theo</span><span class="only-m">Tiếp</span> ${ic('right', 16)}</button>`;
     $('#bottom').innerHTML = `<div class="eb-l">${practice ? `<button class="btn ghost" id="restart">${ic('refresh', 16)}<span class="hide-m">Bắt đầu lại</span></button>` : ''}${scroll ? '' : `<button class="btn" data-act="prev" ${S.cur === 0 ? 'disabled' : ''} aria-label="Câu trước">${ic('left', 16)}</button>`}</div>
       <div class="eb-c"><button class="qcount" id="qlist">${ic('list', 18)} ${scroll ? `Đã làm ${doneCount()}/${n}` : `Câu ${S.cur + 1}/${n}`}</button>${dots}</div>
-      <div class="eb-r">${scroll || last ? `<button class="btn cta lg" data-act="finish">${practice ? 'Kết thúc' : 'Nộp bài'}</button>` : `<button class="btn primary lg" data-act="next"><span class="hide-m">Câu tiếp theo</span><span class="only-m">Tiếp</span> ${ic('right', 16)}</button>`}</div>`;
+      <div class="eb-r">${right}</div>`;
   }
 
   // ---------- Danh sách câu hỏi (cửa sổ) ----------
   async function openList() {
     const cells = order.map((id, i) => {
       let c = 'qn';
-      if (S.answers[id] !== undefined) { c += ' done'; if (practice) c += S.answers[id] === byId[id].ans ? ' ok' : ' no'; }
+      if (S.answers[id] !== undefined) { c += ' done'; if (isChecked(id)) c += S.answers[id] === byId[id].ans ? ' ok' : ' no'; }
       if (S.marked.has(id)) c += ' flag';
       if (i === S.cur && !scroll) c += ' cur';
       return `<button class="${c}" data-go="${i}">${i + 1}</button>`;
@@ -154,16 +178,14 @@ export async function renderExam(root, p) {
     drawBottom();
   }
 
-  // ---------- Lời khích lệ (luyện tập) ----------
-  const GOOD = [['Làm tốt lắm', 'Hãy giữ vững phong độ. Tiến lên'], ['Chính xác!', 'Bạn đang làm rất tốt'], ['Tuyệt vời', 'Cứ thế phát huy nhé']];
-  const BAD = [['Chưa đúng', 'Đọc lời giải rồi làm tiếp nhé'], ['Đừng nản', 'Sai một câu để nhớ lâu hơn']];
+  // ---------- Thông báo nhỏ gọn "Chính xác!" / "Chưa đúng" (không che câu hỏi) ----------
+  const GOOD = ['Chính xác!', 'Tuyệt vời!', 'Làm tốt lắm!', 'Quá đỉnh!'], BAD = ['Chưa đúng', 'Cố lên!', 'Xem lời giải nhé'];
   function cheer(ok) {
-    const pool = ok ? GOOD : BAD, m = pool[Math.floor(Math.random() * pool.length)];
-    const el = $('#cheer'); if (!el) return;
+    const pool = ok ? GOOD : BAD, el = $('#cheer'); if (!el) return;
     el.className = 'cheer ' + (ok ? 'good' : 'bad');
-    el.innerHTML = `<span class="ch-ic">${ic(ok ? 'star' : 'sparkle', 26)}</span><div><b>${m[0]}</b><span>${m[1]}</span></div>`;
+    el.innerHTML = `${ic(ok ? 'star' : 'x', 18)}<b>${pool[Math.floor(Math.random() * pool.length)]}</b>`;
     requestAnimationFrame(() => el.classList.add('show'));
-    clearTimeout(cheerT); cheerT = setTimeout(() => el.classList.remove('show'), 2400);
+    clearTimeout(cheerT); cheerT = setTimeout(() => el.classList.remove('show'), 1500);
   }
 
   // ---------- Lưu ----------
@@ -175,25 +197,34 @@ export async function renderExam(root, p) {
   }
   function pick(i, k) {
     const id = order[i];
-    if (submitting || (practice && S.answers[id])) return;
-    const same = !practice && S.answers[id] === k; // bấm lại để bỏ chọn
+    if (submitting || isChecked(id)) return;
+    const same = S.answers[id] === k; // bấm lại để bỏ chọn
     if (same) delete S.answers[id]; else S.answers[id] = k;
     S.cur = i;
-    if (practice) { const ok = k === byId[id].ans; beep(ok ? 'ok' : 'bad'); cheer(ok); }
-    redrawCard(i); drawBottom(); updateBar();
-    if (practice) requestAnimationFrame(() => main.querySelector('.explain')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })); // điện thoại: cuộn tới lời giải
+    if (practice) beep('tap');
+    paintCard(i); drawBottom(); updateBar();
     persist(same ? { [`answers.${id}`]: F.deleteField() } : { [`answers.${id}`]: k, log: F.arrayUnion({ q: id, k, t: Date.now() }) });
+  }
+  /** Luyện tập: bấm "Kiểm tra" mới hiện đúng/sai (tránh chạm nhầm). */
+  function check() {
+    const id = order[S.cur];
+    if (!practice || submitting || !S.answers[id] || S.checked.has(id)) return;
+    S.checked.add(id);
+    const ok = S.answers[id] === byId[id].ans;
+    beep(ok ? 'ok' : 'bad'); cheer(ok);
+    paintCard(S.cur); drawBottom();
+    persist({ checked: F.arrayUnion(id) });
   }
   function toggleMark(i) {
     const id = order[i];
     if (S.marked.has(id)) { S.marked.delete(id); persist({ marked: F.arrayRemove(id) }); }
     else { S.marked.add(id); persist({ marked: F.arrayUnion(id) }); }
-    redrawCard(i);
+    paintCard(i);
   }
   async function restart() {
     if (!(await confirmBox('Làm lại từ đầu? Các câu đã chọn sẽ bị xóa.', 'Bắt đầu lại'))) return;
-    S.answers = {}; S.marked.clear(); S.cur = 0;
-    persist({ answers: {}, marked: [] }); drawAll();
+    S.answers = {}; S.marked.clear(); S.checked.clear(); S.cur = 0;
+    persist({ answers: {}, marked: [], checked: [] }); drawAll();
   }
 
   // ---------- Nộp bài ----------
@@ -214,6 +245,7 @@ export async function renderExam(root, p) {
     }
     store.del(lk);
     if (auto) toast('Hết giờ — bài đã được tự động nộp.', 'info', 5000);
+    else if (g.score >= (a.passScore ?? 5)) beep('done');
     go('/result/' + a.id);
   }
   async function askSubmit() {
@@ -256,20 +288,25 @@ export async function renderExam(root, p) {
     if (e.target.closest('#qlist')) return openList();
     if (e.target.closest('#restart')) return restart();
     const b = e.target.closest('[data-act]'); if (!b) return;
-    if (b.dataset.act === 'prev') goTo(S.cur - 1);
-    else if (b.dataset.act === 'next') goTo(S.cur + 1);
-    else if (b.dataset.act === 'finish') askSubmit();
+    const act = b.dataset.act;
+    if (act === 'prev') goTo(S.cur - 1);
+    else if (act === 'next') goTo(S.cur + 1);
+    else if (act === 'check') check();
+    else if (act === 'finish') askSubmit();
   });
   $('#back').onclick = () => { toast('Bài làm đã được lưu, bạn có thể tiếp tục sau.', 'info'); go('/'); };
   const setZoom = (d) => { zi = Math.max(0, Math.min(ZOOMS.length - 1, zi + d)); store.set('quiz_zoom', zi); $('#exam').style.setProperty('--z', ZOOMS[zi]); $('#zout').disabled = zi === 0; $('#zin').disabled = zi === ZOOMS.length - 1; };
   $('#zout').onclick = () => setZoom(-1); $('#zin').onclick = () => setZoom(1); setZoom(0);
-  $('#snd')?.addEventListener('click', (e) => { setSound(!isSoundOn()); e.currentTarget.innerHTML = ic(isSoundOn() ? 'volume' : 'mute', 18); if (isSoundOn()) beep('ok'); });
+  $('#snd').addEventListener('click', (e) => { setSound(!isSoundOn()); e.currentTarget.innerHTML = ic(isSoundOn() ? 'volume' : 'mute', 18); if (isSoundOn()) beep('ok'); });
   const onKey = (e) => {
     if (e.target.closest('input,textarea,select') || document.querySelector('.overlay') || scroll) return;
     if (e.key === 'ArrowRight') goTo(S.cur + 1);
     else if (e.key === 'ArrowLeft') goTo(S.cur - 1);
-    else if (e.key === 'Enter') { if (S.cur === n - 1) askSubmit(); else goTo(S.cur + 1); }
-    else if (/^[a-dA-D1-4]$/.test(e.key)) {
+    else if (e.key === 'Enter') {
+      const id = order[S.cur];
+      if (practice && !S.checked.has(id)) check();
+      else if (S.cur === n - 1) askSubmit(); else goTo(S.cur + 1);
+    } else if (/^[a-dA-D1-4]$/.test(e.key)) {
       const pos = isNaN(e.key) ? e.key.toUpperCase().charCodeAt(0) - 65 : +e.key - 1;
       const k = optKeys(order[S.cur])[pos]; if (k) pick(S.cur, k);
     }
@@ -307,10 +344,12 @@ export async function renderResult(root, p) {
       <div class="ring-t"><b>${fmtScore(a.score)}</b><span>/ 10</span></div></div>
     <div class="res-b"><div class="verdict ${pass ? 'good' : 'bad'}">${ic(pass ? 'trophy' : 'target', 16)} ${pass ? 'Đạt yêu cầu' : 'Chưa đạt'}</div>
       <h1>${esc(a.quizTitle)}</h1>
-      ${own ? '' : `<p class="muted">Học viên: <b>${esc(a.userName)}</b> ${a.className ? '· ' + esc(a.className) : ''}</p>`}
+      ${own ? '' : `<p class="muted">Học viên: <b>${esc(a.userName)}</b> ${attemptClasses(a).length ? '· ' + esc(attemptClasses(a).join(', ')) : ''}</p>`}
       <p class="muted">Nộp lúc ${fmtDate(a.submittedAt)} · ${MODES[a.mode] || ''}</p>
       ${own && !locked && a.wrong > 0 ? `<button class="btn cta" id="retry">${ic('refresh', 16)} Ôn lại ${a.wrong} câu sai</button>` : ''}</div>
   </section>
+  ${a.comment ? `<div class="cmt"><b>${ic('mail', 16)} Nhận xét của giáo viên</b><div class="pre">${esc(a.comment)}</div></div>` : ''}
+  ${own ? '' : `<div class="card pad" style="margin-bottom:14px"><label class="field" style="margin:0"><span>Nhận xét gửi học viên</span><textarea class="input" id="cmtBox" rows="2" placeholder="Ví dụ: Em cần xem lại chương 2…">${esc(a.comment || '')}</textarea></label><button class="btn primary sm" id="cmtSave" style="margin-top:8px">${ic('save', 15)} Lưu nhận xét</button></div>`}
   <div class="kpis">
     <div class="kpi ok"><b>${a.correct}</b><span>Câu đúng</span></div><div class="kpi no"><b>${a.wrong}</b><span>Câu sai</span></div>
     <div class="kpi"><b>${a.blank}</b><span>Chưa làm</span></div><div class="kpi"><b>${fmtTime(a.durationSec)}</b><span>Thời gian</span></div></div>
@@ -318,6 +357,12 @@ export async function renderResult(root, p) {
   ${own ? '' : `<div class="row center" style="margin-top:18px"><button class="btn danger-o" id="delAtt">${ic('trash', 16)} Xóa bài này (cho thi lại)</button></div>`}
   <div class="row center" style="margin:18px 0 8px">${quiz && own && canSee(quiz, state.profile, state.user.uid) ? `<a class="btn primary" href="#/quiz/${quiz.id}">${ic('refresh', 16)} Làm lại đề này</a>` : ''}<a class="btn" href="${backHref}">${own ? 'Về trang chủ' : 'Quay lại'}</a></div>`;
 
+  root.querySelector('#cmtSave')?.addEventListener('click', async (ev) => {
+    ev.currentTarget.disabled = true;
+    try { await F.updateDoc(F.doc(db, 'attempts', a.id), { comment: root.querySelector('#cmtBox').value.trim() }); toast('Đã lưu nhận xét.', 'success'); }
+    catch (err) { toast(err.message, 'error'); }
+    ev.currentTarget.disabled = false;
+  });
   root.querySelector('#delAtt')?.addEventListener('click', async () => {
     if (!(await confirmBox('Xóa bài làm này? Học viên sẽ được làm lại.', 'Xóa', true))) return;
     await F.deleteDoc(F.doc(db, 'attempts', a.id)); toast('Đã xóa bài làm.', 'success'); go('/admin/user/' + a.uid);

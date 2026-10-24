@@ -47,6 +47,93 @@ export function normalizeAnswer(v) {
   return m ? m[1] : '';
 }
 
+
+// ---------- Chuẩn hóa văn bản dán từ Word / PDF ----------
+/** Bỏ ký tự ẩn, đổi khoảng trắng lạ, chuẩn hóa dấu tiếng Việt (NFC), chữ nghiêng toán học 𝑥 → x. */
+export function normalizeText(s) {
+  let t = String(s ?? '');
+  t = t.replace(/[\u200b\u200c\u200d\u2060\ufeff\u00ad]/g, '').replace(/[\u00a0\u2007\u202f]/g, ' ').replace(/\r/g, '');
+  try { t = t.normalize('NFC'); } catch (e) { /* bỏ qua */ }
+  return t.replace(/[\u{1D400}-\u{1D7FF}]/gu, (ch) => ch.normalize('NFKC'));
+}
+
+/** Dòng này trông giống mã nguồn (C++, Python…)? Dùng để tự đóng khung mã khi nhập từ Word/PDF. */
+export function looksLikeCode(line) {
+  const t = String(line || '').trim();
+  if (!t) return false;
+  if (/^[{}]\s*;?$/.test(t)) return true;
+  if (/^#\s*(include|define|ifdef|ifndef|endif|pragma)\b/.test(t)) return true;
+  if (/^using\s+namespace\b/.test(t)) return true;
+  if (/^(int|long|float|double|char|bool|string|void|auto|const|unsigned|vector|struct|class|return|cout|cin|printf|scanf|for|while|if|else|do|switch|case|break|continue)\b/.test(t) && /[;{}()=<>:]/.test(t)) return true;
+  if (/;\s*$/.test(t) && /[(){}\[\]=<>+\-*\/&|]/.test(t)) return true;
+  return false;
+}
+/** Bọc các dòng mã liên tiếp (sau dòng đầu của đề) bằng ``` để hiển thị đúng thụt lề, không bị KaTeX/định dạng làm hỏng. */
+export function autoFenceCode(text) {
+  const t = String(text || '');
+  if (t.includes('```')) return t;
+  const lines = t.split('\n'); if (lines.length < 2) return t;
+  const out = [lines[0]]; let run = [];
+  const flush = () => { if (run.length) { out.push('```', ...run, '```'); run = []; } };
+  for (const l of lines.slice(1)) { if (looksLikeCode(l)) run.push(l); else { flush(); out.push(l); } }
+  flush();
+  return out.join('\n');
+}
+
+/** Văn bản → HTML an toàn: khối mã ```...``` và `mã nội dòng`; còn lại giữ xuống dòng. */
+export function richText(s) {
+  const raw = String(s ?? '').replace(/\t/g, '    ');
+  const inline = (x) => esc(x).replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  const parts = raw.split('```');
+  if (parts.length < 3) return inline(raw);
+  let out = '';
+  parts.forEach((part, i) => {
+    const isCode = i % 2 === 1 && i < parts.length - 1;
+    if (isCode) {
+      let code = part.replace(/^[ \t]*\n/, '').replace(/\s+$/, '');
+      const first = code.split('\n')[0];
+      if (code.includes('\n') && /^[A-Za-z+#]{1,10}$/.test(first.trim())) code = code.slice(first.length + 1);
+      out += `<pre class="code"><code>${esc(code)}</code></pre>`;
+    } else {
+      let t = part;
+      if (i > 0) t = t.replace(/^\n/, '');
+      if (i < parts.length - 1) t = t.replace(/\n$/, '');
+      out += inline(t);
+    }
+  });
+  return out;
+}
+
+// ---------- Lớp học (một học viên có thể thuộc nhiều lớp) ----------
+export const userClasses = (u) => (u && Array.isArray(u.classes) && u.classes.length ? u.classes : u && u.className ? [u.className] : []);
+export const attemptClasses = (a) => (a && Array.isArray(a.classes) && a.classes.length ? a.classes : a && a.className ? [a.className] : []);
+
+// ---------- PDF: ghép các mảnh chữ thành dòng ----------
+export function pdfItemsToLines(items) {
+  const rows = [];
+  for (const it of items || []) {
+    if (!it || typeof it.str !== 'string' || !it.transform) continue;
+    const x = it.transform[4], y = it.transform[5];
+    let row = rows.find((r) => Math.abs(r.y - y) <= 2.5);
+    if (!row) { row = { y, parts: [] }; rows.push(row); }
+    row.parts.push({ x, str: it.str, w: it.width || 0 });
+  }
+  rows.sort((a, b) => b.y - a.y);
+  rows.forEach((r) => r.parts.sort((a, b) => a.x - b.x));
+  const live = rows.filter((r) => r.parts.some((p) => p.str.trim()));
+  const base = Math.min(...live.map((r) => r.parts.find((p) => p.str.trim()).x));
+  return live.map((r) => {
+    const first = r.parts.find((p) => p.str.trim());
+    const cw = first.w && first.str.length ? first.w / first.str.length : 5; // độ rộng 1 ký tự
+    let s = ' '.repeat(Math.max(0, Math.round((first.x - base) / cw)) >= 2 ? Math.round((first.x - base) / cw) : 0), end = null; // thụt lề (mã nguồn)
+    for (const p of r.parts) {
+      if (end !== null && p.str) { const gap = p.x - end; if (gap > 24) s += '   '; else if (gap > 1.2 && !s.endsWith(' ') && !p.str.startsWith(' ')) s += ' '; }
+      s += p.str; if (p.str) end = p.x + p.w;
+    }
+    return s.replace(/\s+$/, '');
+  }).filter((l) => l.trim() !== '');
+}
+
 // ---------- Nhập câu hỏi ----------
 const ALIAS = {
   id: ['mã câu', 'ma cau', 'mã', 'ma', 'id', 'code'],
@@ -65,9 +152,9 @@ export function finalize(items) {
   const questions = [], errors = [], used = new Set();
   items.forEach((it, i) => {
     const label = it._row ? `Dòng ${it._row}` : `Câu thứ ${i + 1}`;
-    const q = String(it.q ?? '').trim();
+    const q = autoFenceCode(normalizeText(it.q).trim());
     const o = {};
-    KEYS.forEach((k) => (o[k] = String(it[k] ?? '').trim()));
+    KEYS.forEach((k) => (o[k] = normalizeText(it[k]).trim()));
     const filled = KEYS.filter((k) => o[k]);
     if (!q && !filled.length) return; // dòng trống
     const ans = normalizeAnswer(it.ans);
@@ -79,7 +166,7 @@ export function finalize(items) {
     const base = id; let n = 2;
     while (used.has(id)) id = `${base}_${n++}`;
     used.add(id);
-    questions.push({ id, q, ...o, ans, exp: String(it.exp ?? '').trim() });
+    questions.push({ id, q, ...o, ans, exp: normalizeText(it.exp).trim() });
   });
   return { questions, errors };
 }
@@ -110,23 +197,32 @@ export function htmlToQuestionText(html) {
     const t = inner.replace(/<[^>]+>/g, '');
     return /^\s*[A-Da-d]\s*[.)]/.test(t) ? '*' + t.replace(/^\s+/, '') : t;
   });
+  const SUP = { 0: '⁰', 1: '¹', 2: '²', 3: '³', 4: '⁴', 5: '⁵', 6: '⁶', 7: '⁷', 8: '⁸', 9: '⁹', '+': '⁺', '-': '⁻', '−': '⁻', '=': '⁼', '(': '⁽', ')': '⁾', n: 'ⁿ', i: 'ⁱ' };
+  const SUB = { 0: '₀', 1: '₁', 2: '₂', 3: '₃', 4: '₄', 5: '₅', 6: '₆', 7: '₇', 8: '₈', 9: '₉', '+': '₊', '-': '₋', '−': '₋', '=': '₌', '(': '₍', ')': '₎', a: 'ₐ', e: 'ₑ', o: 'ₒ', x: 'ₓ', i: 'ᵢ', j: 'ⱼ', n: 'ₙ' };
+  const script = (map, mark) => (m, inner) => { const t = inner.replace(/<[^>]+>/g, ''); return [...t].every((c) => map[c]) && t ? [...t].map((c) => map[c]).join('') : (t.length > 1 ? `${mark}(${t})` : mark + t); };
+  h = h.replace(/<sup>([\s\S]*?)<\/sup>/gi, script(SUP, '^')).replace(/<sub>([\s\S]*?)<\/sub>/gi, script(SUB, '_'));
+  h = h.replace(/>\s*\n\s*</g, '><').replace(/\s*\n\s*/g, ' '); // xuống dòng trong mã HTML chỉ là khoảng trắng (khác với </p>, <br>)
   h = h.replace(/<\/(p|li|tr|h\d|div)>/gi, '\n').replace(/<br\s*\/?>/gi, '\n').replace(/<\/(td|th)>/gi, '\t').replace(/<[^>]+>/g, '');
   return dec(h);
 }
 
-/** Phân tích văn bản dán từ Word: "Câu 1: … / A. … / Đáp án: B / Giải thích: …" */
+/** Phân tích văn bản dán từ Word: "Câu 1: … / A. … / Đáp án: B / Giải thích: …". Giữ nguyên thụt lề của mã nguồn (C++…). */
 export function parseQuestionText(text) {
-  const out = []; let cur = null, field = null; const keyPairs = [];
+  const out = []; let cur = null, field = null, inFence = false; const keyPairs = [];
   const reQ = /^\s*(?:câu|cau|question)\s*\d+\s*[:.)\-]?\s*(.*)$/i;
   const reNum = /^\s*\d+\s*[.)]\s+(.*)$/;
   const reAns = /^\s*(?:đáp án|dap an|đ\/a|answer)(?:\s*đúng)?\s*[:：]?\s*(.*)$/i;
   const reExp = /^\s*(?:giải thích|giai thich|lời giải|loi giai|hướng dẫn giải|explanation)\s*[:：]?\s*(.*)$/i;
   const rePart = /^\s*PH[ẦA]N\s+[IVXLC\d]+\b/i;
-  const lines = String(text || '').replace(/\r/g, '').split('\n');
+  const lines = normalizeText(text).split('\n');
   const hasPrefix = lines.some((l) => reQ.test(l));
   const start = (t) => { cur = { q: t, A: '', B: '', C: '', D: '', ans: '', exp: '' }; out.push(cur); field = 'q'; };
+  const add = (txt) => { cur[field] = (cur[field] ? cur[field] + '\n' : '') + txt; };
   for (const raw of lines) {
     const line = raw.trim();
+    // khối mã ``` ... ```: giữ nguyên mọi dòng (kể cả dòng trống, thụt lề, "A." trong mã)
+    if (cur && /^```/.test(line)) { inFence = !inFence; if (field === 'ans') field = 'exp'; add(line); continue; }
+    if (cur && inFence) { add(raw.replace(/\t/g, '    ').replace(/\s+$/, '')); continue; }
     if (!line) continue;
     let m;
     if (rePart.test(line)) { cur = null; field = null; continue; } // tiêu đề phần: bỏ qua
@@ -144,7 +240,7 @@ export function parseQuestionText(text) {
     if ((m = line.match(reNum)) && (!hasPrefix || (cur && cur.ans && field === 'ans'))) { start(m[1]); continue; }
     if (!cur) { if (!hasPrefix) start(line); continue; } // trước câu đầu tiên: bỏ qua lời dẫn nếu đề có "Câu N"
     if (field === 'ans') { if (!hasPrefix) start(line); continue; }
-    cur[field] = (cur[field] ? cur[field] + '\n' : '') + line; // dòng nối tiếp
+    add(looksLikeCode(line) ? raw.replace(/\t/g, '    ').replace(/\s+$/, '') : line); // dòng nối tiếp (mã nguồn giữ thụt lề)
   }
   keyPairs.forEach(([n, a]) => { if (out[n - 1] && !out[n - 1].ans) out[n - 1].ans = a; });
   return finalize(out);
@@ -214,20 +310,40 @@ export function audienceOf(q) {
   if ((q.allowedClasses || []).length || (q.allowedUsers || []).length) return 'classes';
   return 'all';
 }
+/** Thư mục: mặc định chưa giao (không ảnh hưởng đề bên trong). */
+export const folderAudience = (f) => f.audience || 'none';
 export const AUDIENCE_LABEL = { none: 'Chưa giao', all: 'Tất cả mọi người', classes: 'Theo lớp', students: 'Theo học viên' };
-export const isOn = (v) => v === true || v === 'always'; // bật đảo câu/đáp án (tương thích đề cũ)
-export function canSee(q, profile, uid) {
+export const isOn = (v) => v === true || v === 'always'; // bật đảo (tương thích đề cũ)
+/** Việc giao (audience + lớp + học viên) có cho phép người này xem không? */
+function specAllows(aud, spec, profile, uid) {
+  if (aud === 'all') return true;
+  if (aud === 'none') return false;
+  const us = spec.allowedUsers || [];
+  if (aud === 'students') return us.includes(uid);
+  const mine = userClasses(profile).map((c) => String(c).trim().toLowerCase());
+  const cs = (spec.allowedClasses || []).map((c) => String(c).trim().toLowerCase());
+  return us.includes(uid) || cs.some((c) => mine.includes(c));
+}
+/** Các thư mục cha (từ gần đến xa) của một thư mục. */
+export function folderChain(folders, fid) {
+  const out = []; const seen = new Set(); let cur = (folders || []).find((f) => f.id === fid);
+  while (cur && !seen.has(cur.id)) { out.push(cur); seen.add(cur.id); cur = (folders || []).find((f) => f.id === cur.parentId); }
+  return out;
+}
+/** Thư mục (đã giao) mà đề này được thừa hưởng việc giao. */
+export function inheritedFolder(q, folders) {
+  return folderChain(folders, q.folderId).find((f) => folderAudience(f) !== 'none') || null;
+}
+/** Học viên này có thấy đề không? Đề thấy được nếu chính đề được giao HOẶC thư mục chứa nó được giao. */
+export function canSeeQuiz(q, folders, profile, uid) {
   if (q.hidden) return false;
   if (profile?.role === 'admin') return true;
   if (profile?.role === 'guest') return q.guest === true;
-  const a = audienceOf(q);
-  if (a === 'none') return false;
-  if (a === 'all') return true;
-  const us = q.allowedUsers || [];
-  if (a === 'students') return us.includes(uid);
-  const cs = (q.allowedClasses || []).map(norm);
-  return us.includes(uid) || (!!profile?.className && cs.includes(norm(profile.className)));
+  if (specAllows(audienceOf(q), q, profile, uid)) return true;
+  return folderChain(folders, q.folderId).some((f) => specAllows(folderAudience(f), f, profile, uid));
 }
+/** Tương thích cũ (không xét thư mục). */
+export const canSee = (q, profile, uid) => canSeeQuiz(q, [], profile, uid);
 export function quizAccess(q, now, used) {
   if (q.openAt && now < q.openAt) return { ok: false, reason: 'Đề chưa mở — mở lúc ' + fmtDate(q.openAt) };
   if (q.closeAt && now > q.closeAt) return { ok: false, reason: 'Đề đã đóng lúc ' + fmtDate(q.closeAt) };
@@ -292,4 +408,14 @@ export function attemptsToRows(list) {
     'Đúng': a.correct ?? '', 'Sai': a.wrong ?? '', 'Chưa làm': a.blank ?? '', 'Tổng câu': a.total ?? '',
     'Điểm (/10)': a.score ?? '', 'Trạng thái': a.status === 'submitted' ? 'Đã nộp' : 'Đang làm',
   }));
+}
+
+/** Trang HTML để in/lưu PDF. withAnswers=true: đánh dấu đáp án đúng (gạch chân) + lời giải. */
+export function questionsToPrintHtml(title, qs, { withAnswers = true } = {}) {
+  const body = qs.map((q, i) => `<div class="q"><p class="qt"><b>Câu ${i + 1}.</b> ${richText(q.q)}</p>${KEYS.filter((k) => q[k]).map((k) => `<p class="o"><b${withAnswers && k === q.ans ? ' class="ok"' : ''}>${k}.</b> ${richText(q[k])}</p>`).join('')}${withAnswers ? `<p class="a">Đáp án: <b>${q.ans}</b></p>${q.exp ? `<p class="e"><i>Lời giải:</i> ${richText(q.exp)}</p>` : ''}` : ''}</div>`).join('');
+  return `<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>${esc(title)}</title><style>
+@page{size:A4;margin:16mm}body{font:12pt/1.5 "Times New Roman",serif;color:#000;margin:0}h1{text-align:center;font-size:16pt;margin:0 0 12pt}
+.q{break-inside:avoid;margin:0 0 12pt}.q p{margin:2pt 0;white-space:pre-wrap}.o{padding-left:18pt}.ok{text-decoration:underline}.a{color:#075}.e{font-size:11pt}
+pre.code{font:10pt/1.35 Consolas,"DejaVu Sans Mono",monospace;background:#f3f3f3;border:1px solid #ccc;padding:6pt;margin:4pt 0;white-space:pre;break-inside:avoid}code{font-family:Consolas,"DejaVu Sans Mono",monospace}
+</style></head><body><h1>${esc(title)}</h1>${body}</body></html>`;
 }

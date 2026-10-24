@@ -1,5 +1,5 @@
 // Tiện ích giao diện: sáng/tối, thông báo, hộp thoại, âm thanh, KaTeX, file.
-import { esc, hueOf } from './lib.js';
+import { esc, hueOf, userClasses } from './lib.js';
 import { ic } from './icons.js';
 
 export const $ = (s, r = document) => r.querySelector(s);
@@ -32,9 +32,10 @@ export const themeBtn = () => `<button class="btn icon ghost" data-theme-toggle 
 // ---------- Thành phần nhỏ ----------
 export const avatar = (name, size = 36) => {
   const n = String(name || '?').trim();
-  const initials = n.split(/\s+/).slice(-2).map((w) => w[0]).join('').toUpperCase() || '?';
+  const initials = n.split(/\s+/).filter((w) => /^\p{L}/u.test(w)).slice(-2).map((w) => [...w][0]).join('').toUpperCase() || '?';
   return `<span class="avatar" style="--h:${hueOf(n)};width:${size}px;height:${size}px;font-size:${Math.round(size * 0.38)}px">${esc(initials)}</span>`;
 };
+export const classChips = (u) => userClasses(u).map(classChip).join('');
 export const classChip = (name) => (name ? `<span class="chip" style="--h:${hueOf(name)}">${esc(name)}</span>` : '');
 export const empty = (icon, title, sub = '') => `<div class="empty">${ic(icon, 34)}<b>${esc(title)}</b>${sub ? `<span>${esc(sub)}</span>` : ''}</div>`;
 export const loading = (text = 'Đang tải…') => `<div class="loading"><span class="spin"></span>${esc(text)}</div>`;
@@ -101,22 +102,33 @@ export const promptBox = (title, label, value = '', okText = 'Lưu') =>
 let actx;
 export const isSoundOn = () => store.get('quiz_sound') !== 'off';
 export const setSound = (on) => store.set('quiz_sound', on ? 'on' : 'off');
+/** Tiếng chuông "tưng": sóng sin + hài âm lệch (như chuông nhỏ), vào nhanh, tắt dần. */
+function ping(freq, at, dur, vol) {
+  const t = actx.currentTime + at, g = actx.createGain(), g2 = actx.createGain();
+  const o = actx.createOscillator(), o2 = actx.createOscillator();
+  o.type = 'sine'; o.frequency.value = freq; o2.type = 'sine'; o2.frequency.value = freq * 2.76; g2.gain.value = 0.28;
+  o.connect(g); o2.connect(g2); g2.connect(g); g.connect(actx.destination);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.006); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.start(t); o2.start(t); o.stop(t + dur + 0.05); o2.stop(t + dur + 0.05);
+}
+/** Tiếng "bụp" trầm, ngắn, không gắt (trả lời sai). */
+function thud(freq, at, vol) {
+  const t = actx.currentTime + at, g = actx.createGain(), o = actx.createOscillator();
+  o.type = 'triangle'; o.frequency.setValueAtTime(freq, t); o.frequency.exponentialRampToValueAtTime(freq * 0.62, t + 0.16);
+  o.connect(g); g.connect(actx.destination);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.012); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+  o.start(t); o.stop(t + 0.25);
+}
+/** kind: ok (tưng tưng) · bad (bụp bụp) · tap (chạm nhẹ khi chọn) · done (hoàn thành). */
 export function beep(kind) {
   if (!isSoundOn()) return;
   try {
     actx = actx || new (window.AudioContext || window.webkitAudioContext)();
     if (actx.state === 'suspended') actx.resume();
-    const notes = kind === 'ok' ? [[659, 0], [880, 0.11]] : [[247, 0], [196, 0.13]];
-    notes.forEach(([f, t]) => {
-      const o = actx.createOscillator(), g = actx.createGain();
-      o.type = kind === 'ok' ? 'sine' : 'triangle'; o.frequency.value = f;
-      o.connect(g); g.connect(actx.destination);
-      const s = actx.currentTime + t;
-      g.gain.setValueAtTime(0.0001, s);
-      g.gain.exponentialRampToValueAtTime(0.12, s + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, s + 0.22);
-      o.start(s); o.stop(s + 0.25);
-    });
+    if (kind === 'ok') { ping(1568, 0, 0.5, 0.26); ping(2093, 0.12, 0.6, 0.24); }
+    else if (kind === 'bad') { thud(260, 0, 0.3); thud(205, 0.16, 0.28); }
+    else if (kind === 'tap') ping(1175, 0, 0.09, 0.07);
+    else if (kind === 'done') [1047, 1319, 1568, 2093].forEach((f, i) => ping(f, i * 0.1, 0.55, 0.22));
   } catch (e) { /* thiết bị không hỗ trợ âm thanh */ }
 }
 

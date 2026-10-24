@@ -240,7 +240,7 @@ tr.click{cursor:pointer}tr.click:hover td{background:var(--surface2)}
 .qlist{display:grid;gap:10px}
 .qrow{display:flex;gap:12px;padding:14px;background:var(--surface);border:1px solid var(--line);border-radius:14px;transition:border-color .15s}.qrow:hover{border-color:color-mix(in srgb,var(--primary) 35%,var(--line))}.qrow.editing{border-color:var(--primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 15%,transparent)}
 .qr-n{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:var(--primary-soft);color:var(--primary);font-weight:700;font-size:.85em;flex:none}
-.qr-b{flex:1;min-width:0}.qr-q{font-weight:500;white-space:pre-wrap;word-break:break-word;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.qr-b{flex:1;min-width:0}.qr-q{font-weight:500;white-space:pre-wrap;word-break:break-word;max-height:11em;overflow:hidden}
 .qr-o{display:grid;grid-template-columns:1fr 1fr;gap:4px 14px;margin-top:8px;font-size:.88em;color:var(--muted)}.qr-o span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.qr-o b{margin-right:4px}.qr-o .ok{color:var(--ok);font-weight:600}
 @media(max-width:560px){.qr-o{grid-template-columns:1fr}}
 .qr-e{margin-top:8px;font-size:.85em;color:var(--muted)}.qr-a{display:flex;flex-direction:column;gap:2px}
@@ -424,3 +424,37 @@ html{scroll-behavior:smooth}
 .kpis.sm{grid-template-columns:repeat(3,1fr);margin-bottom:12px}
 
 .tb-link{display:inline-flex}@media(max-width:719px){.tb-link{display:none}}
+
+/* ============ Mã nguồn, chữ có định dạng ============ */
+.rt{white-space:pre-wrap;word-break:break-word}
+pre.code{font:500 .9em/1.5 Consolas,"SFMono-Regular",Menlo,"DejaVu Sans Mono",monospace;background:var(--surface2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:8px 0;overflow-x:auto;white-space:pre;tab-size:4;word-break:normal;-webkit-text-size-adjust:none}
+pre.code code{background:none;padding:0;font-size:inherit}
+code{font-family:Consolas,Menlo,"DejaVu Sans Mono",monospace;background:var(--surface2);padding:1px 5px;border-radius:5px;font-size:.92em}
+.opt .ot pre.code{margin:2px 0;font-size:.85em}
+
+/* ============ Thông báo đúng/sai: nhỏ gọn, không che câu hỏi ============ */
+.cheer{position:fixed;left:50%;right:auto;bottom:86px;max-width:calc(100vw - 32px);display:flex;align-items:center;gap:8px;padding:8px 16px;border-radius:99px;font-size:.95rem;background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow);opacity:0;transform:translate(-50%,10px);pointer-events:none;transition:opacity .2s,transform .2s;z-index:40}
+.cheer.show{opacity:1;transform:translate(-50%,0)}
+.cheer b{font-size:inherit}.cheer .ic{flex:none}
+.cheer.good{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 45%,var(--line))}.cheer.bad{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 45%,var(--line))}
+.cheer.good .ic{animation:pop .45s ease}
+.exam .opt .ol{transition:background .15s,border-color .15s,color .15s}
+.explain{margin-top:12px}.explain .rt{margin-top:4px}
+
+/* ============ Học viên: lớp → thư mục → đề ============ */
+.crumbs a{cursor:pointer}
+.fold-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-bottom:16px}
+.fold-card{display:flex;align-items:center;gap:12px;padding:16px;border-radius:16px;background:var(--surface);border:1px solid var(--line);color:var(--ink);transition:.15s}
+.fold-card:hover{text-decoration:none;transform:translateY(-2px);box-shadow:var(--shadow);border-color:color-mix(in srgb,var(--primary) 40%,var(--line))}
+.fold-card .fc-ic{display:grid;place-items:center;width:46px;height:46px;border-radius:14px;background:var(--warn-soft);color:var(--warn);flex:none}
+.fold-card div{display:grid;min-width:0}.fold-card b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.fold-card span{font-size:.85em;color:var(--muted)}
+.start-layout{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:0 0 18px;padding:12px 14px;background:var(--surface2);border-radius:var(--r-s)}
+.cmt{margin:14px 0;padding:14px 16px;border-radius:var(--r);background:var(--primary-soft)}.cmt b{display:flex;align-items:center;gap:6px;margin-bottom:4px;color:var(--primary)}
+@media(max-width:719px){
+  .ptitle{font-size:1.2rem}.et-c b{font-size:.85rem}.fold-grid{grid-template-columns:1fr 1fr}.fold-card{padding:12px}.fold-card .fc-ic{width:38px;height:38px}
+  .cheer{bottom:80px}
+}
+
+.mode-exam{--mh:218}
+.nd-list{display:flex;flex-wrap:wrap;gap:8px}.nd{display:inline-flex;align-items:center;gap:8px;padding:4px 12px 4px 4px;border-radius:99px;background:var(--surface2);color:var(--ink);font-size:.9em}.nd:hover{text-decoration:none;background:var(--primary-soft)}
+.exp-opt{padding:12px 14px}.exp-opt span{display:grid}.exp-opt small{font-size:.82em}

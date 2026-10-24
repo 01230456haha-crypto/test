@@ -1,19 +1,20 @@
 // Trình soạn đề (2 tab): Câu hỏi · Giao bài & cài đặt
 import { db, F } from './fb.js';
 import { go } from './state.js';
-import { esc, KEYS, finalize, mergeQuestions, newQuestionId, toLocalInput, fromLocalInput, audienceOf, isOn } from './lib.js';
+import { esc, KEYS, finalize, mergeQuestions, newQuestionId, toLocalInput, fromLocalInput, audienceOf, isOn, richText } from './lib.js';
 import { getQuiz, getContent, saveContent, getClasses, getAll, pathOf, getFolders } from './data.js';
-import { parseFile, exportQuestionsXlsx, exportQuestionsWord, downloadTemplate } from './importer.js';
+import { parseFile, exportQuestionsXlsx, exportQuestionsWord, exportQuestionsPdf, downloadTemplate, downloadWordTemplate } from './importer.js';
+import { mountResults } from './admin-results.js';
 import { ic } from './icons.js';
 import { toast, modal, confirmBox, loading, empty, renderMath } from './ui.js';
 import { mountAssignPicker, applyAssign, audienceChips, copyQuizLink } from './adminui.js';
 
-const TABS = [['questions', 'Câu hỏi', 'list'], ['settings', 'Giao bài & cài đặt', 'send']];
+const TABS = [['results', 'Kết quả', 'chart'], ['questions', 'Câu hỏi', 'list'], ['settings', 'Giao bài & cài đặt', 'send']];
 
 export async function renderQuizEditor(root, p, q) {
   const id = p.id;
-  let tab = q.tab || 'questions';
-  if (tab === 'results' || tab === 'live') { location.replace('#/admin/results?quiz=' + id); return; } // kết quả nằm ở trang Kết quả
+  let tab = q.tab || 'results'; // bấm vào đề → thấy ngay ai đang làm / ai đã làm
+  if (tab === 'live') tab = 'results';
   if (tab === 'assign') tab = 'settings';
   root.innerHTML = loading();
   const [quiz, folders] = await Promise.all([getQuiz(id), getFolders()]);
@@ -26,8 +27,8 @@ export async function renderQuizEditor(root, p, q) {
     <a class="back" href="${back}">${ic('left', 16)} ${crumbs.length ? esc(crumbs[crumbs.length - 1].name) : 'Danh sách đề'}</a>
     <div class="qe-head card pad">
       <div class="qe-t"><span class="qc-ic mode-${quiz.mode} lg">${ic('file', 24)}</span><div><h1>${esc(quiz.title)}</h1>
-        <div class="chips-inline"><span class="tag">${quiz.count || 0} câu</span><span class="tag">${quiz.minutes > 0 ? quiz.minutes + ' phút' : 'Không giới hạn giờ'}</span><span class="tag mode-${quiz.mode}">${kind}</span>${audienceChips(quiz)}${quiz.hidden ? '<span class="tag warn">Đang ẩn</span>' : ''}</div></div>
-        <div class="row qe-act"><button class="btn sm" id="copyLink">${ic('link', 15)} Sao chép link</button><a class="btn sm" href="#/admin/results?quiz=${id}">${ic('chart', 15)} Xem kết quả</a></div></div>
+        <div class="chips-inline"><span class="tag">${quiz.count || 0} câu</span><span class="tag">${quiz.minutes > 0 ? quiz.minutes + ' phút' : 'Không giới hạn giờ'}</span><span class="tag mode-${quiz.mode}">${kind}</span>${audienceChips(quiz, folders)}${quiz.hidden ? '<span class="tag warn">Đang ẩn</span>' : ''}</div></div>
+        <div class="row qe-act"><button class="btn sm" id="copyLink">${ic('link', 15)} Sao chép link</button></div></div>
       ${audienceOf(quiz) === 'none' ? `<div class="note warn" style="margin-bottom:0">${ic('lock', 16)}<span>Đề này <b>chưa giao</b> nên học viên chưa thấy.</span><a class="btn primary sm" href="#/admin/quiz/${id}?tab=settings">${ic('send', 15)} Giao bài ngay</a></div>` : ''}
     </div>
     <nav class="tabs sub">${TABS.map(([k, n, i]) => `<a href="#/admin/quiz/${id}?tab=${k}" class="${k === tab ? 'on' : ''}">${ic(i, 16)}<span>${n}</span></a>`).join('')}</nav>
@@ -35,7 +36,7 @@ export async function renderQuizEditor(root, p, q) {
   root.querySelector('#copyLink').onclick = () => copyQuizLink(id);
   const box = root.querySelector('#tab');
   const ctx = { id, quiz, box, root };
-  const fn = { questions: tabQuestions, settings: tabSettings }[tab] || tabQuestions;
+  const fn = { results: ({ id, box }) => mountResults(box, { quizId: id, fixed: true }), questions: tabQuestions, settings: tabSettings }[tab] || tabQuestions;
   const cleanup = await fn(ctx);
   return () => { root.onclick = null; box.onclick = null; if (typeof cleanup === 'function') cleanup(); };
 }
@@ -55,7 +56,7 @@ async function tabQuestions({ id, quiz, box }) {
   }
   function card(x, i) {
     if (editing === x.id) return `<div class="qrow editing" data-id="${x.id}"><div class="qr-n">${i + 1}</div><div class="qr-b">${editForm(x)}</div></div>`;
-    return `<div class="qrow" data-id="${x.id}"><div class="qr-n">${i + 1}</div><div class="qr-b"><div class="qr-q">${esc(x.q)}</div>
+    return `<div class="qrow" data-id="${x.id}"><div class="qr-n">${i + 1}</div><div class="qr-b"><div class="qr-q rt">${richText(x.q)}</div>
       <div class="qr-o">${KEYS.filter((k) => x[k]).map((k) => `<span class="${k === x.ans ? 'ok' : ''}"><b>${k}</b> ${esc(x[k])}</span>`).join('')}</div>
       ${x.exp ? `<div class="qr-e">${ic('sparkle', 13)} ${esc(x.exp)}</div>` : ''}</div>
       <div class="qr-a"><button class="btn icon ghost sm" data-act="up" title="Lên" ${i === 0 ? 'disabled' : ''}>${ic('left', 15).replace('<svg', '<svg style="transform:rotate(90deg)"')}</button>
@@ -66,9 +67,7 @@ async function tabQuestions({ id, quiz, box }) {
     box.innerHTML = `<div class="toolbar">
         <button class="btn primary" data-act="add">${ic('plus', 16)} Thêm câu</button>
         <button class="btn" data-act="import">${ic('upload', 16)} Nhập từ file / dán văn bản</button>
-        <button class="btn" data-act="xlsx" ${qs.length ? '' : 'disabled'}>${ic('download', 16)} Xuất Excel</button>
-        <button class="btn" data-act="word" ${qs.length ? '' : 'disabled'}>${ic('download', 16)} Xuất Word</button>
-        <button class="btn ghost" data-act="tpl">Tải Excel mẫu</button></div>
+        <button class="btn" data-act="export" ${qs.length ? '' : 'disabled'}>${ic('download', 16)} Tải file về</button></div>
       ${qs.length ? '' : `<div class="card pad">${empty('file', 'Đề chưa có câu hỏi nào', 'Bấm "Thêm câu" để soạn trực tiếp hoặc "Nhập từ file" để tải lên Excel/Word.')}</div>`}
       <div class="qlist">${qs.slice(0, shown).map(card).join('')}${isNew && editing ? '' : ''}</div>
       ${qs.length > shown ? `<div class="row center"><button class="btn" data-act="more">Hiện thêm (${qs.length - shown} câu nữa)</button></div>` : ''}`;
@@ -99,9 +98,7 @@ async function tabQuestions({ id, quiz, box }) {
         const j = act === 'up' ? i - 1 : i + 1; if (j < 0 || j >= qs.length) return;
         [qs[i], qs[j]] = [qs[j], qs[i]]; await persist(); draw();
       } else if (act === 'more') { shown += 50; draw(); }
-      else if (act === 'xlsx') exportQuestionsXlsx(quiz.title, qs);
-      else if (act === 'word') exportQuestionsWord(quiz.title, qs);
-      else if (act === 'tpl') downloadTemplate();
+      else if (act === 'export') exportDialog(quiz.title, qs);
       else if (act === 'import') {
         const r = await importModal(qs.length);
         if (!r) return;
@@ -113,13 +110,29 @@ async function tabQuestions({ id, quiz, box }) {
   draw();
 }
 
+/** Chọn định dạng tải về: Excel, Word (.docx), PDF. */
+function exportDialog(title, qs) {
+  const opts = [['xlsx', 'Excel (.xlsx)', 'Nhập lại hệ thống được, dùng để lưu trữ', 'file'], ['word', 'Word (.docx)', 'Đáp án đúng được gạch chân', 'file'], ['pdfa', 'PDF có đáp án', 'In hoặc lưu thành PDF, kèm đáp án và lời giải', 'download'], ['pdf', 'PDF đề thi', 'Không có đáp án, để phát cho học viên', 'download']];
+  return modal({
+    title: 'Tải file về', hideOk: true, cancelText: 'Đóng',
+    html: `<div class="stack">${opts.map(([k, t, d, i]) => `<button class="btn block left exp-opt" data-x="${k}">${ic(i, 18)}<span><b>${t}</b><small class="muted">${d}</small></span></button>`).join('')}</div>`,
+    onOpen: (box) => box.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-x]'); if (!b) return; box.close(null);
+      const k = b.dataset.x;
+      if (k === 'xlsx') exportQuestionsXlsx(title, qs); else if (k === 'word') exportQuestionsWord(title, qs);
+      else { exportQuestionsPdf(title, qs, k === 'pdfa'); toast('Chọn "Lưu dưới dạng PDF" trong hộp thoại in.', 'info', 5000); }
+    }),
+  });
+}
+
 function importModal(existing) {
   let res = null;
   return modal({
     title: 'Nhập câu hỏi', wide: true, okText: 'Áp dụng',
     html: `<div class="seg"><button class="on" data-t="file">Tải file lên</button><button data-t="paste">Dán văn bản từ Word</button></div>
-      <div id="p-file"><label class="drop">${ic('upload', 30)}<b>Chọn file Excel, CSV, JSON hoặc Word</b><span>.xlsx · .csv · .json · .docx · .txt</span><input type="file" id="fi" hidden accept=".xlsx,.xls,.csv,.json,.docx,.txt"></label>
-        <p class="muted s">Cột Excel: STT, Mã câu, Câu hỏi, A, B, C, D, Đáp án, Giải thích (STT, Mã câu, Giải thích có thể bỏ trống).</p></div>
+      <div id="p-file"><label class="drop">${ic('upload', 30)}<b>Chọn file Excel, Word, PDF…</b><span>.xlsx · .docx · .pdf · .csv · .json · .txt</span><input type="file" id="fi" hidden accept=".xlsx,.xls,.csv,.json,.docx,.pdf,.txt"></label>
+        <p class="muted s">Excel: cột STT, Mã câu, Câu hỏi, A, B, C, D, Đáp án, Giải thích. Word: gạch chân đáp án đúng hoặc ghi dòng "Đáp án: A". PDF cần có dòng "Đáp án: …" (PDF không lưu được gạch chân).</p>
+        <div class="row"><button class="btn sm" type="button" id="tplX">Tải Excel mẫu</button><button class="btn sm" type="button" id="tplW">Tải Word mẫu</button></div></div>
       <div id="p-paste" class="hide"><textarea class="input" id="tx" rows="9" placeholder="Câu 1: Thủ đô của Việt Nam?&#10;A. Hà Nội&#10;B. Huế&#10;C. Đà Nẵng&#10;D. Cần Thơ&#10;Đáp án: A&#10;Giải thích: …"></textarea><button class="btn" id="parse" style="margin-top:8px">Phân tích văn bản</button></div>
       <div id="pv"></div>
       ${existing ? `<div class="field" style="margin-top:12px"><span>Cách nhập</span><label class="check"><input type="radio" name="md" value="add" checked> Thêm vào cuối đề (đang có ${existing} câu)</label><label class="check"><input type="radio" name="md" value="rep"> Thay thế toàn bộ câu hỏi hiện có</label></div>` : ''}`,
@@ -129,6 +142,7 @@ function importModal(existing) {
         m.querySelector('#pv').innerHTML = `<div class="note ${r.questions.length ? 'ok' : 'warn'}" style="margin-top:12px">${ic(r.questions.length ? 'check' : 'alert', 16)}<span>Đọc được <b>${r.questions.length}</b> câu hợp lệ${r.errors.length ? `, <b>${r.errors.length}</b> mục lỗi (sẽ bị bỏ qua)` : ''}.</span></div>
           ${r.errors.length ? `<ul class="errs">${r.errors.slice(0, 10).map((x) => `<li>${esc(x)}</li>`).join('')}${r.errors.length > 10 ? `<li>… và ${r.errors.length - 10} lỗi khác</li>` : ''}</ul>` : ''}`;
       };
+      m.querySelector('#tplX').onclick = downloadTemplate; m.querySelector('#tplW').onclick = downloadWordTemplate;
       m.querySelectorAll('.seg [data-t]').forEach((b) => (b.onclick = () => {
         m.querySelectorAll('.seg button').forEach((x) => x.classList.toggle('on', x === b));
         m.querySelector('#p-file').classList.toggle('hide', b.dataset.t !== 'file');
@@ -156,19 +170,16 @@ async function tabSettings({ id, quiz, box }) {
   const [classes, users] = await Promise.all([getClasses(), getAll('users')]);
   const students = users.filter((u) => u.role === 'user' && u.status !== 'blocked').sort((a, b) => String(a.displayName).localeCompare(String(b.displayName), 'vi'));
   const sw = (i, t, d, on) => `<label class="sw-row"><div><b>${t}</b><span class="muted">${d}</span></div><span class="switch"><input type="checkbox" id="${i}" ${on ? 'checked' : ''}><i></i></span></label>`;
-  const practice = quiz.mode === 'practice', layout = quiz.mode === 'scroll' ? 'scroll' : 'step';
-  const desc = { exam: 'Làm xong nộp bài mới thấy đáp án và điểm.', practice: 'Chọn xong biết ngay đúng/sai kèm lời giải.' };
+  const practice = quiz.mode === 'practice';
+  const desc = { exam: 'Làm xong nộp bài mới thấy đáp án và điểm. Học viên tự chọn xem từng câu hoặc cả trang.', practice: 'Chọn đáp án, bấm Kiểm tra mới hiện đúng/sai kèm lời giải.' };
   box.innerHTML = `<div class="card pad"><h3>${ic('send', 18)} Giao đề cho ai?</h3><div id="ap"></div></div>
     <div class="card pad" style="margin-top:14px"><h3>Cài đặt đề</h3>
       <div class="cfg-row"><div><b>Loại đề</b><p class="muted" id="kdesc" style="margin:2px 0 0">${practice ? desc.practice : desc.exam}</p></div>
         <div class="bigseg"><label><input type="radio" name="kind" value="practice" ${practice ? 'checked' : ''}><span>Luyện tập</span></label><label><input type="radio" name="kind" value="exam" ${!practice ? 'checked' : ''}><span>Kiểm tra</span></label></div></div>
-      <div class="cfg-row ${practice ? 'hide' : ''}" id="layoutRow" style="margin-top:12px"><div><b>Cách hiển thị</b></div>
-        <div class="bigseg sm"><label><input type="radio" name="layout" value="step" ${layout === 'step' ? 'checked' : ''}><span>Từng câu</span></label><label><input type="radio" name="layout" value="scroll" ${layout === 'scroll' ? 'checked' : ''}><span>Cả trang</span></label></div></div>
       <label class="field" style="margin-top:14px"><span>Tên đề</span><input class="input" id="title" value="${esc(quiz.title)}"></label>
       <div class="two"><label class="field"><span>Thời gian (phút)</span><input class="input" type="number" min="0" id="minutes" value="${quiz.minutes ?? 0}"><small class="muted">0 = không giới hạn</small></label>
         <label class="field"><span>Số câu mỗi lần làm</span><input class="input" type="number" min="0" id="pick" value="${quiz.pickCount || 0}"><small class="muted">0 = làm hết. Số khác = bốc ngẫu nhiên</small></label></div>
-      ${sw('shq', 'Đảo thứ tự câu hỏi', 'Mỗi lần làm, câu hỏi được xáo trộn.', isOn(quiz.shuffleQ))}
-      ${sw('sha', 'Đảo thứ tự đáp án', 'Đáp án A, B, C, D được xáo trộn.', isOn(quiz.shuffleA))}</div>
+      ${sw('shuf', 'Đảo câu hỏi và đáp án', 'Mỗi lần làm, thứ tự câu hỏi và đáp án A, B, C, D được xáo trộn.', isOn(quiz.shuffleQ) || isOn(quiz.shuffleA))}</div>
     <details class="adv"><summary>${ic('settings', 17)} Nâng cao</summary><div class="adv-b">
       ${sw('review', 'Cho xem lại đáp án sau khi nộp', 'Tắt thì học viên chỉ thấy điểm.', !quiz.lockReview)}
       ${sw('hidden', 'Ẩn đề', 'Học viên không thấy đề, chỉ xem được điểm đã làm.', quiz.hidden)}
@@ -181,10 +192,7 @@ async function tabSettings({ id, quiz, box }) {
     <div class="row" style="margin-top:16px"><button class="btn primary lg" id="save">${ic('save', 16)} Lưu</button></div>`;
   const picker = mountAssignPicker(box.querySelector('#ap'), { classes, students, value: { audience: audienceOf(quiz), allowedClasses: quiz.allowedClasses, allowedUsers: quiz.allowedUsers, guest: quiz.guest } });
   box.addEventListener('change', (e) => {
-    if (e.target.name === 'kind') {
-      box.querySelector('#layoutRow').classList.toggle('hide', e.target.value === 'practice');
-      box.querySelector('#kdesc').textContent = desc[e.target.value];
-    }
+    if (e.target.name === 'kind') box.querySelector('#kdesc').textContent = desc[e.target.value];
   });
   box.querySelector('#save').onclick = async (e) => {
     const g = (s) => box.querySelector(s);
@@ -192,12 +200,12 @@ async function tabSettings({ id, quiz, box }) {
     const v = picker.get(), err = picker.check(v); if (err) return toast(err, 'error');
     e.currentTarget.disabled = true;
     try {
-      const mode = g('input[name=kind]:checked').value === 'practice' ? 'practice' : g('input[name=layout]:checked').value;
+      const mode = g('input[name=kind]:checked').value === 'practice' ? 'practice' : 'exam'; // cách hiển thị do học viên chọn
       await applyAssign([id], v, {
         title, description: g('#desc').value.trim(), minutes: Math.max(0, +g('#minutes').value || 0), pickCount: Math.max(0, parseInt(g('#pick').value) || 0),
         passScore: Math.min(10, Math.max(0, +g('#pass').value || 0)), maxAttempts: Math.max(0, parseInt(g('#max').value) || 0),
         openAt: fromLocalInput(g('#openAt').value), closeAt: fromLocalInput(g('#closeAt').value),
-        mode, shuffleQ: g('#shq').checked, shuffleA: g('#sha').checked, lockReview: !g('#review').checked, hidden: g('#hidden').checked,
+        mode, shuffleQ: g('#shuf').checked, shuffleA: g('#shuf').checked, lockReview: !g('#review').checked, hidden: g('#hidden').checked,
       });
       toast(v.audience === 'none' ? 'Đã lưu. Đề đang ở dạng nháp (chưa giao).' : 'Đã lưu và giao bài.', 'success'); go('/admin/quiz/' + id + '?tab=settings');
     } catch (er) { toast(er.message, 'error'); e.currentTarget.disabled = false; }

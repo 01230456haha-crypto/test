@@ -1,9 +1,9 @@
 // Thành phần dùng chung cho các trang quản trị (bộ chọn "giao cho ai", bảng đang làm bài…).
 import { db, F } from './fb.js';
-import { esc, fmtClock, fmtTime, hueOf, displayLogin, audienceOf } from './lib.js';
+import { esc, fmtClock, fmtTime, hueOf, displayLogin, audienceOf, folderAudience, inheritedFolder, userClasses } from './lib.js';
 import { ic } from './icons.js';
 import { getClasses, getAll } from './data.js';
-import { modal, avatar, classChip, toast } from './ui.js';
+import { modal, avatar, classChip, classChips, toast } from './ui.js';
 
 /** Thanh sao lưu/cài đặt dùng chung (các mục khác đã có thanh bên). */
 export function tabsHtml(active) {
@@ -15,14 +15,22 @@ export const answeredCount = (a) => Object.keys(a.answers || {}).length;
 export const isOnline = (ms, within = 60000) => Date.now() - (ms || 0) < within;
 export const dot = (on) => `<span class="dot ${on ? 'on' : ''}"></span>`;
 
-/** Nhãn "đề này đang giao cho ai". */
-export function audienceChips(q) {
-  const a = audienceOf(q);
-  if (a === 'none') return '<span class="tag warn">Chưa giao</span>';
-  if (a === 'all') return `<span class="tag ok">Tất cả mọi người</span>${q.guest ? '<span class="tag">Cho khách</span>' : ''}`;
-  if (a === 'classes') return (q.allowedClasses || []).map(classChip).join('') || '<span class="tag warn">Chưa chọn lớp</span>';
-  return `<span class="tag">${(q.allowedUsers || []).length} học viên</span>`;
+/** Nhãn "đề/thư mục này đang giao cho ai" (không gồm trường hợp chưa giao của thư mục). */
+function specChips(aud, sp, guest) {
+  if (aud === 'all') return `<span class="tag ok">Tất cả mọi người</span>${guest ? '<span class="tag">Cho khách</span>' : ''}`;
+  if (aud === 'classes') return (sp.allowedClasses || []).map(classChip).join('') || '<span class="tag warn">Chưa chọn lớp</span>';
+  return `<span class="tag">${(sp.allowedUsers || []).length} học viên</span>`;
 }
+export function audienceChips(q, folders = []) {
+  const a = audienceOf(q);
+  if (a === 'none') {
+    const f = inheritedFolder(q, folders);
+    if (f) return `<span class="tag" style="background:var(--primary-soft);color:var(--primary)">${ic('folder', 12)} Theo thư mục "${esc(f.name)}"</span>${specChips(folderAudience(f), f, false)}`;
+    return '<span class="tag warn">Chưa giao</span>';
+  }
+  return specChips(a, q, q.guest);
+}
+export const folderChips = (f) => (folderAudience(f) === 'none' ? '' : `<span class="tag" style="background:var(--primary-soft);color:var(--primary)">Giao cả thư mục</span>${specChips(folderAudience(f), f, false)}`);
 
 /** Bảng các bài đang làm (thời gian thực). */
 export function liveTable(list, { showQuiz = true } = {}) {
@@ -44,7 +52,7 @@ export function liveTable(list, { showQuiz = true } = {}) {
 export function mountAssignPicker(el, { classes, students, value = {}, withGuest = true }) {
   const st = { aud: value.audience || 'none', cls: new Set(value.allowedClasses || []), usr: new Set(value.allowedUsers || []), guest: !!value.guest, flt: '' };
   const opts = [['none', 'Chưa giao', 'Nháp, học viên chưa thấy đề', 'lock'], ['all', 'Tất cả mọi người', 'Mọi học viên đều thấy', 'users'], ['classes', 'Theo lớp', 'Chỉ các lớp bạn chọn thấy', 'book'], ['students', 'Theo học viên', 'Chỉ những người bạn chọn thấy', 'user']];
-  const countIn = (n) => students.filter((u) => u.className === n).length;
+  const countIn = (n) => students.filter((u) => userClasses(u).includes(n)).length;
 
   function body() {
     if (st.aud === 'none') return `<div class="note warn">${ic('lock', 16)}<span>Đề đang ở dạng <b>nháp</b>. Học viên <b>chưa thấy</b> đề này cho đến khi bạn chọn giao cho lớp, học viên hoặc mọi người.</span></div>`;
@@ -56,9 +64,9 @@ export function mountAssignPicker(el, { classes, students, value = {}, withGuest
         : `<div class="note warn">${ic('alert', 16)}<span>Bạn chưa tạo lớp nào. Hãy vào mục <a href="#/admin/classes">Lớp học</a> để tạo lớp trước.</span></div>`;
     }
     const f = st.flt.toLowerCase();
-    const list = students.filter((u) => (u.displayName + ' ' + (u.className || '') + ' ' + displayLogin(u)).toLowerCase().includes(f));
+    const list = students.filter((u) => (u.displayName + ' ' + userClasses(u).join(' ') + ' ' + displayLogin(u)).toLowerCase().includes(f));
     return `<div class="search">${ic('search', 16)}<input class="input" data-flt placeholder="Tìm theo tên, lớp, tên đăng nhập…" value="${esc(st.flt)}"></div>
-      <div class="pick-list">${list.length ? list.map((u) => `<label class="pick-row"><input type="checkbox" data-u="${u.id}" ${st.usr.has(u.id) ? 'checked' : ''}>${avatar(u.displayName, 28)}<span><b>${esc(u.displayName)}</b><small class="muted"> ${esc(displayLogin(u))}</small></span>${classChip(u.className)}</label>`).join('') : '<p class="muted pad-s">Không có học viên phù hợp.</p>'}</div>
+      <div class="pick-list">${list.length ? list.map((u) => `<label class="pick-row"><input type="checkbox" data-u="${u.id}" ${st.usr.has(u.id) ? 'checked' : ''}>${avatar(u.displayName, 28)}<span><b>${esc(u.displayName)}</b><small class="muted"> ${esc(displayLogin(u))}</small></span>${classChips(u)}</label>`).join('') : '<p class="muted pad-s">Không có học viên phù hợp.</p>'}</div>
       <p class="muted s">Đã chọn <b>${st.usr.size}</b> học viên.</p>`;
   }
   const drawBody = () => { el.querySelector('.aud-body').innerHTML = body(); };
@@ -87,13 +95,13 @@ export function mountAssignPicker(el, { classes, students, value = {}, withGuest
 }
 
 /** Hộp thoại giao bài (dùng khi giao nhiều đề một lúc). */
-export async function assignModal({ title = 'Giao bài', value = {} } = {}) {
+export async function assignModal({ title = 'Giao bài', value = {}, withGuest = true } = {}) {
   const [classes, users] = await Promise.all([getClasses(), getAll('users')]);
   const students = users.filter((u) => u.role === 'user' && u.status !== 'blocked').sort((a, b) => String(a.displayName).localeCompare(String(b.displayName), 'vi'));
   let picker;
   return modal({
     title, wide: true, okText: 'Giao bài', html: '<div id="ap"></div>',
-    onOpen: (box) => { picker = mountAssignPicker(box.querySelector('#ap'), { classes, students, value }); },
+    onOpen: (box) => { picker = mountAssignPicker(box.querySelector('#ap'), { classes, students, value, withGuest }); },
     onOk: () => { const v = picker.get(); const err = picker.check(v); if (err) throw new Error(err); return v; },
   });
 }
@@ -112,4 +120,11 @@ export async function copyQuizLink(id) {
   const url = location.origin + location.pathname + '#/quiz/' + id;
   try { await navigator.clipboard.writeText(url); toast('Đã sao chép link. Gửi cho học viên qua Zalo.', 'success'); }
   catch (e) { await modal({ title: 'Link đề', html: `<input class="input" readonly value="${esc(url)}" onclick="this.select()"><p class="muted s">Chọn và sao chép link này.</p>`, hideOk: true, cancelText: 'Đóng' }); }
+}
+
+/** Giao cả thư mục: mọi đề trong thư mục (kể cả thư mục con, đề thêm sau này) được thừa hưởng. */
+export async function applyAssignFolders(ids, v) {
+  for (const id of ids) {
+    await F.updateDoc(F.doc(db, 'folders', id), { audience: v.audience, allowedClasses: v.audience === 'classes' ? v.allowedClasses : [], allowedUsers: v.audience === 'students' ? v.allowedUsers : [] });
+  }
 }

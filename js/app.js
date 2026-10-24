@@ -20,7 +20,7 @@ const view = document.getElementById('view');
 // [mẫu đường dẫn, hàm hiển thị, tuỳ chọn]
 const toExams = () => { location.replace('#/admin/exams'); }; // "/admin" cũ → danh sách đề
 const ROUTES = [
-  ['/', S.renderHome], ['/f/:id', S.renderHome], ['/quiz/:id', S.renderQuizStart],
+  ['/', S.renderHome], ['/class/:key', S.renderClass], ['/class/:key/f/:fid', S.renderClass], ['/quiz/:id', S.renderQuizStart],
   ['/exam/:id', E.renderExam, { bare: true }], ['/result/:id', E.renderResult],
   ['/history', S.renderHistory], ['/me', S.renderProfile],
   ['/admin', toExams, { admin: true }], ['/admin/exams', AD.renderExplorer, { admin: true }], ['/admin/f/:id', AD.renderExplorer, { admin: true }],
@@ -52,11 +52,11 @@ function drawShell(path) {
     ? [['/admin/exams', 'Đề thi', 'file', (p) => p.startsWith('/admin/exams') || p.startsWith('/admin/f/') || p.startsWith('/admin/quiz/')],
        ['/admin/users', 'Học viên', 'users', (p) => p.startsWith('/admin/user') || p.startsWith('/admin/class')],
        ['/admin/results', 'Kết quả', 'chart', (p) => p === '/admin/results' || p === '/admin/live' || p.startsWith('/result/')]]
-    : [['/', 'Đề thi', 'book', (p) => p === '/' || p.startsWith('/quiz/') || p.startsWith('/result/') || p.startsWith('/f/')]]
+    : [['/', 'Đề thi', 'book', (p) => p === '/' || p.startsWith('/class/') || p.startsWith('/quiz/') || p.startsWith('/result/')]]
         .concat(guest ? [] : [['/history', 'Lịch sử', 'clock', (p) => p === '/history']]);
   const bottom = admin
     ? [['/admin/settings', 'Cài đặt', 'settings', (p) => p === '/admin/settings' || p === '/admin/backup']]
-    : [['/me', guest ? 'Thoát' : 'Tài khoản', 'user', (p) => p === '/me']];
+    : [['/me', 'Cài đặt', 'settings', (p) => p === '/me']];
   const link = ([h, t, i, on]) => `<a href="#${h}" class="${on(path) ? 'on' : ''}">${ic(i, 22)}<span>${t}</span></a>`;
   rail.innerHTML = `<a class="rail-logo" href="#${admin ? '/admin/exams' : '/'}" aria-label="Trang chủ">${ic('book', 26)}</a>
     <div class="rail-main">${items.map(link).join('')}</div><div class="rail-bot">${bottom.map(link).join('')}</div>`;

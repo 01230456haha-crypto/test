@@ -1,11 +1,11 @@
 // Quản trị: thư mục & đề, theo dõi trực tiếp, cài đặt đăng nhập, sao lưu.
 import { db, F } from './fb.js';
 import { state, go, DEFAULT_SETTINGS } from './state.js';
-import { esc, byName, MODES, audienceOf } from './lib.js';
+import { esc, byName, MODES, audienceOf, inheritedFolder } from './lib.js';
 import { getFolders, getQuizzes, getContent, getAll, createQuiz, pathOf, descendantIds } from './data.js';
 import { ic } from './icons.js';
 import { toast, modal, confirmBox, promptBox, loading, empty, downloadBlob, readFile } from './ui.js';
-import { tabsHtml, audienceChips, assignModal, applyAssign, copyQuizLink } from './adminui.js';
+import { tabsHtml, audienceChips, folderChips, assignModal, applyAssign, applyAssignFolders, copyQuizLink } from './adminui.js';
 
 const nameOf = (t, x) => (t === 'folder' ? x.name : x.title);
 
@@ -46,15 +46,6 @@ export async function renderExplorer(root, p) {
   const sel = new Set(); // 'q:ID' hoặc 'f:ID'
   root.innerHTML = loading();
   const load = async () => { [folders, quizzes] = await Promise.all([getFolders(), getQuizzes()]); draw(); };
-  const quizIdsOf = (keys) => {
-    const out = new Set();
-    for (const k of keys) {
-      const [t, id] = k.split(':');
-      if (t === 'q') out.add(id);
-      else { const ds = descendantIds(folders, id); quizzes.filter((q) => ds.has(q.folderId)).forEach((q) => out.add(q.id)); }
-    }
-    return [...out];
-  };
   const drawSel = () => {
     const el = root.querySelector('#selbar'); if (!el) return;
     el.innerHTML = sel.size ? `<div class="selbar"><b>Đã chọn ${sel.size}</b><button class="btn primary sm" id="bulkAssign">${ic('send', 15)} Giao bài</button><button class="btn sm" id="bulkClear">Bỏ chọn</button></div>` : '';
@@ -70,14 +61,14 @@ export async function renderExplorer(root, p) {
     root.innerHTML = `<div class="page-h"><div><h1 class="ptitle">${here ? esc(here.name) : 'Đề thi'}</h1>
         <div class="crumbs">${ic('home', 15)}<a href="#/admin/exams">Tất cả</a>${crumbs.map((c) => `<span>/</span><a href="#/admin/f/${c.id}">${esc(c.name)}</a>`).join('')}</div></div>
         <div class="row"><button class="btn" id="newFolder">${ic('folder', 16)} Thư mục mới</button><button class="btn primary" id="newQuiz">${ic('plus', 16)} Tạo đề mới</button></div></div>
-      ${quizzes.some((q) => audienceOf(q) === 'none') ? `<div class="note warn" style="margin-top:0">${ic('lock', 16)}<span><b>${quizzes.filter((q) => audienceOf(q) === 'none').length}</b> đề chưa giao nên học viên chưa thấy. Tick chọn đề rồi bấm <b>Giao bài</b>.</span></div>` : ''}
+      ${quizzes.some((q) => audienceOf(q) === 'none' && !inheritedFolder(q, folders)) ? `<div class="note warn" style="margin-top:0">${ic('lock', 16)}<span><b>${quizzes.filter((q) => audienceOf(q) === 'none' && !inheritedFolder(q, folders)).length}</b> đề chưa giao nên học viên chưa thấy. Tick chọn đề hoặc thư mục rồi bấm <b>Giao bài</b>.</span></div>` : ''}
       <div id="selbar"></div>
       ${subs.length || qs.length ? `<div class="card list-card">
-        ${subs.map((f) => `<div class="row-item">${chk('f:' + f.id)}<a class="ri-main" href="#/admin/f/${f.id}"><span class="ri-ic folder">${ic('folder', 20)}</span><div class="ri-b"><b>${esc(f.name)}</b><span class="muted">${folders.filter((x) => x.parentId === f.id).length} thư mục · ${quizzes.filter((q) => q.folderId === f.id).length} đề</span></div></a>
+        ${subs.map((f) => `<div class="row-item">${chk('f:' + f.id)}<a class="ri-main" href="#/admin/f/${f.id}"><span class="ri-ic folder">${ic('folder', 20)}</span><div class="ri-b"><b>${esc(f.name)}</b><span class="muted">${folders.filter((x) => x.parentId === f.id).length} thư mục · ${quizzes.filter((q) => q.folderId === f.id).length} đề</span><div class="chips-inline">${folderChips(f)}</div></div></a>
           <button class="btn icon ghost" data-menu="folder" data-id="${f.id}" aria-label="Thao tác">${ic('more')}</button></div>`).join('')}
         ${qs.map((q) => `<div class="row-item">${chk('q:' + q.id)}<a class="ri-main" href="#/admin/quiz/${q.id}"><span class="ri-ic mode-${q.mode}">${ic('file', 20)}</span><div class="ri-b"><b>${esc(q.title)}</b>
           <span class="muted">${q.count || 0} câu · ${q.minutes > 0 ? q.minutes + ' phút' : 'không giới hạn giờ'} · ${q.mode === 'practice' ? 'Luyện tập' : 'Kiểm tra'}</span>
-          <div class="chips-inline">${audienceChips(q)}${q.hidden ? '<span class="tag warn">Đang ẩn</span>' : ''}</div></div></a>
+          <div class="chips-inline">${audienceChips(q, folders)}${q.hidden ? '<span class="tag warn">Đang ẩn</span>' : ''}</div></div></a>
           <button class="btn icon ghost" data-menu="quiz" data-id="${q.id}" aria-label="Thao tác">${ic('more')}</button></div>`).join('')}</div>`
       : `<div class="card pad">${empty('folder', 'Thư mục này đang trống', 'Hãy tạo đề mới hoặc thư mục con.')}</div>`}`;
     drawSel();
@@ -89,10 +80,11 @@ export async function renderExplorer(root, p) {
       if (menu) return itemMenu(menu.dataset.menu, menu.dataset.id);
       if (e.target.closest('#bulkClear')) { sel.clear(); return draw(); }
       if (e.target.closest('#bulkAssign')) {
-        const ids = quizIdsOf([...sel]);
-        if (!ids.length) return toast('Mục đã chọn chưa có đề nào để giao.', 'error');
-        const v = await assignModal({ title: `Giao bài cho ${ids.length} đề` }); if (!v) return;
-        await applyAssign(ids, v); toast(`Đã giao ${ids.length} đề.`, 'success'); sel.clear(); return load();
+        const fids = [...sel].filter((k) => k.startsWith('f:')).map((k) => k.slice(2)), qids = [...sel].filter((k) => k.startsWith('q:')).map((k) => k.slice(2));
+        const v = await assignModal({ title: `Giao bài cho ${sel.size} mục`, withGuest: !fids.length }); if (!v) return;
+        if (fids.length) await applyAssignFolders(fids, v);
+        if (qids.length) await applyAssign(qids, v);
+        toast('Đã giao bài.', 'success'); sel.clear(); return load();
       }
       if (e.target.closest('#newFolder')) {
         const name = await promptBox('Thư mục mới', 'Tên thư mục (ví dụ: Toán 12, Chương 1)', '', 'Tạo');
@@ -131,10 +123,10 @@ export async function renderExplorer(root, p) {
     if (op === 'open') return go(isF ? '/admin/f/' + item.id : '/admin/quiz/' + item.id);
     if (op === 'link') return copyQuizLink(item.id);
     if (op === 'assign') {
-      const ids = quizIdsOf([(isF ? 'f:' : 'q:') + item.id]);
-      if (!ids.length) return toast('Thư mục này chưa có đề nào để giao.', 'error');
-      const v = await assignModal({ title: isF ? `Giao ${ids.length} đề trong "${item.name}"` : `Giao bài: ${item.title}`, value: isF ? {} : { audience: audienceOf(item), allowedClasses: item.allowedClasses, allowedUsers: item.allowedUsers, guest: item.guest } });
-      if (!v) return; await applyAssign(ids, v); toast('Đã giao bài.', 'success');
+      const v = await assignModal(isF
+        ? { title: `Giao cả thư mục "${item.name}"`, withGuest: false, value: { audience: item.audience || 'none', allowedClasses: item.allowedClasses, allowedUsers: item.allowedUsers } }
+        : { title: `Giao bài: ${item.title}`, value: { audience: audienceOf(item), allowedClasses: item.allowedClasses, allowedUsers: item.allowedUsers, guest: item.guest } });
+      if (!v) return; await (isF ? applyAssignFolders([item.id], v) : applyAssign([item.id], v)); toast('Đã giao bài.', 'success');
     } else if (op === 'rename') {
       const v = await promptBox('Đổi tên', 'Tên mới', nameOf(t, item)); if (!v) return;
       await F.updateDoc(F.doc(db, isF ? 'folders' : 'quizzes', item.id), isF ? { name: v } : { title: v, updatedAt: Date.now() });
