@@ -458,3 +458,37 @@ code{font-family:Consolas,Menlo,"DejaVu Sans Mono",monospace;background:var(--su
 .mode-exam{--mh:218}
 .nd-list{display:flex;flex-wrap:wrap;gap:8px}.nd{display:inline-flex;align-items:center;gap:8px;padding:4px 12px 4px 4px;border-radius:99px;background:var(--surface2);color:var(--ink);font-size:.9em}.nd:hover{text-decoration:none;background:var(--primary-soft)}
 .exp-opt{padding:12px 14px}.exp-opt span{display:grid}.exp-opt small{font-size:.82em}
+
+/* ============ Màn làm bài: thanh trên + thanh dưới CỐ ĐỊNH, chỉ khung câu hỏi cuộn ============ */
+body.in-exam{overflow:hidden;position:fixed;inset:0;width:100%}
+.view.bare>*{animation:none}
+.exam{position:fixed;inset:0;display:flex;flex-direction:column;height:100vh;height:100dvh;background:var(--bg);z-index:5}
+.exam .exam-top{position:relative;top:auto;flex:none}
+.exam .progress{flex:none}
+.exam .exam-main{flex:1 1 auto;min-height:0;max-width:none;width:100%;margin:0;padding:14px 16px 28px;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+.exam .exam-main>*{max-width:900px;margin-left:auto;margin-right:auto}
+.exam .exam-bottom{position:relative;left:auto;right:auto;bottom:auto;flex:none}
+.exam .cheer{position:absolute;bottom:90px}
+/* cỡ chữ (nút + / −) áp dụng cho câu hỏi, đáp án, lời giải, mã nguồn — cả điện thoại và máy tính */
+.exam .qtext{font-size:calc(1.06em * var(--z))}
+.exam .opt .ot,.exam .explain,.exam .explain .rt{font-size:calc(1em * var(--z))}
+.exam pre.code{font-size:calc(.9em * var(--z))}
+/* thanh phụ: đổi từng câu ⇄ cả trang + dải số câu */
+.exam .exam-sub{flex:none;display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--surface);border-bottom:1px solid var(--line)}
+.seg-mini{display:inline-flex;flex:none;background:var(--surface2);border-radius:99px;padding:3px}
+.seg-mini button{display:inline-flex;align-items:center;gap:5px;border:none;background:transparent;color:var(--muted);padding:6px 11px;border-radius:99px;font:inherit;font-size:.82rem;font-weight:600;cursor:pointer;white-space:nowrap}
+.seg-mini button.on{background:var(--primary);color:var(--primary-ink)}
+.qstrip{display:flex;gap:6px;overflow-x:auto;flex:1;min-width:0;padding:3px 3px 5px;scrollbar-width:none;-webkit-overflow-scrolling:touch;scroll-behavior:auto}
+.qstrip::-webkit-scrollbar{display:none}
+.qs{flex:none;width:32px;height:32px;border-radius:9px;border:1.5px solid var(--line);background:var(--surface);color:var(--muted);font:inherit;font-weight:700;font-size:.82rem;cursor:pointer;touch-action:manipulation}
+.qs.done{background:var(--primary);border-color:var(--primary);color:var(--primary-ink)}
+.qs.flag{background:#f2b53a;border-color:#f2b53a;color:#3b2a00}
+.qs.cur{box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 35%,transparent);transform:scale(1.1)}
+@media(max-width:719px){
+  .exam .exam-main{padding:12px 12px 24px}
+  .exam .tool{width:34px;height:34px}.exam .et-r{gap:4px}.exam .timer{padding:6px 9px;font-size:.88em;gap:4px}
+  .exam .exam-top{padding:8px 8px;gap:6px}.exam #back{padding:0;width:40px;height:40px}
+  .seg-mini button{padding:6px 9px;font-size:.78rem;gap:4px}.exam .exam-sub{padding:5px 8px;gap:6px}
+}
+
+.exam .qcard{scroll-margin-top:0}

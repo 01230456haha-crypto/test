@@ -48,7 +48,8 @@ export async function renderExam(root, p) {
     KEYS.forEach((k) => { if (String(q[k] || '').trim() && !base.includes(k)) base.push(k); });
     return base;
   };
-  const practice = a.mode === 'practice', scroll = a.mode === 'scroll';
+  const practice = a.mode === 'practice';
+  let scroll = a.mode === 'scroll'; // Kiểm tra: học viên đổi từng câu ⇄ cả trang ngay trong lúc làm
   const lk = 'quiz_att_' + a.id;
   const ZOOMS = [0.9, 1, 1.15, 1.3, 1.5];
   let zi = Math.max(0, Math.min(ZOOMS.length - 1, +(store.get('quiz_zoom') ?? 1)));
@@ -69,12 +70,13 @@ export async function renderExam(root, p) {
       <div class="et-c"><b>${esc(a.quizTitle)}</b><span>Thí sinh: ${esc(a.userName || state.profile?.displayName || '')}</span></div>
       <div class="et-r">
         <div class="timer" id="timer">${ic('clock', 16)}<span id="tv">--:--</span></div>
-        <button class="tool d-only" id="zout" title="Thu nhỏ chữ" aria-label="Thu nhỏ chữ">${ic('zoomout', 18)}</button>
-        <button class="tool d-only" id="zin" title="Phóng to chữ" aria-label="Phóng to chữ">${ic('zoomin', 18)}</button>
+        <button class="tool" id="zout" title="Thu nhỏ chữ" aria-label="Thu nhỏ chữ">${ic('zoomout', 18)}</button>
+        <button class="tool" id="zin" title="Phóng to chữ" aria-label="Phóng to chữ">${ic('zoomin', 18)}</button>
         <button class="tool" id="snd" title="Bật/tắt âm thanh" aria-label="Bật/tắt âm thanh">${ic(isSoundOn() ? 'volume' : 'mute', 18)}</button>
       </div>
     </header>
     <div class="progress"><i id="bar"></i></div>
+    ${practice ? '' : '<div class="exam-sub" id="sub"></div>'}
     <main class="exam-main" id="main"></main>
     <footer class="exam-bottom" id="bottom"></footer>
     <div class="cheer" id="cheer"></div>
@@ -129,10 +131,29 @@ export async function renderExam(root, p) {
   function drawSingle(dir) {
     main.innerHTML = qHtml(S.cur);
     main.querySelector('.qcard').classList.add(dir > 0 ? 'in-next' : dir < 0 ? 'in-prev' : 'in-fade');
-    renderMath(main); window.scrollTo({ top: 0 });
+    renderMath(main); main.scrollTop = 0; // chỉ cuộn khung câu hỏi, hai thanh trên/dưới đứng yên
   }
   const doneCount = () => Object.keys(S.answers).filter((id) => byId[id]).length;
   function updateBar() { $('#bar').style.width = (doneCount() / n) * 100 + '%'; }
+
+  // ---------- Thanh phụ (Kiểm tra): đổi từng câu ⇄ cả trang + dải số câu bấm để nhảy ----------
+  function drawSub() {
+    const sub = $('#sub'); if (!sub) return;
+    const cells = order.map((id, i) => {
+      let c = 'qs'; if (S.answers[id] !== undefined) c += ' done'; if (S.marked.has(id)) c += ' flag'; if (i === S.cur) c += ' cur';
+      return `<button class="${c}" data-go="${i}" aria-label="Câu ${i + 1}">${i + 1}</button>`;
+    }).join('');
+    sub.innerHTML = `<div class="seg-mini"><button data-lay="step" class="${scroll ? '' : 'on'}">${ic('file', 15)}<span>Từng câu</span></button><button data-lay="scroll" class="${scroll ? 'on' : ''}">${ic('list', 15)}<span>Cả trang</span></button></div><div class="qstrip" id="qstrip">${cells}</div>`;
+    const st = sub.querySelector('#qstrip'), cur = st.querySelector('.cur');
+    if (cur) st.scrollLeft = cur.offsetLeft - st.clientWidth / 2 + cur.offsetWidth / 2;
+  }
+  function setLayout(sc) {
+    if (sc === scroll || practice) return;
+    scroll = sc; a.mode = sc ? 'scroll' : 'step'; store.set('quiz_layout', a.mode);
+    persist({ mode: a.mode });
+    drawAll();
+    if (scroll) requestAnimationFrame(() => document.getElementById('qc-' + S.cur)?.scrollIntoView({ block: 'start' }));
+  }
 
   // ---------- Thanh dưới ----------
   function drawBottom() {
@@ -151,6 +172,7 @@ export async function renderExam(root, p) {
     $('#bottom').innerHTML = `<div class="eb-l">${practice ? `<button class="btn ghost" id="restart">${ic('refresh', 16)}<span class="hide-m">Bắt đầu lại</span></button>` : ''}${scroll ? '' : `<button class="btn" data-act="prev" ${S.cur === 0 ? 'disabled' : ''} aria-label="Câu trước">${ic('left', 16)}</button>`}</div>
       <div class="eb-c"><button class="qcount" id="qlist">${ic('list', 18)} ${scroll ? `Đã làm ${doneCount()}/${n}` : `Câu ${S.cur + 1}/${n}`}</button>${dots}</div>
       <div class="eb-r">${right}</div>`;
+    drawSub();
   }
 
   // ---------- Danh sách câu hỏi (cửa sổ) ----------
@@ -173,7 +195,7 @@ export async function renderExam(root, p) {
   function goTo(i) {
     i = Math.max(0, Math.min(n - 1, i));
     const dir = i - S.cur; S.cur = i;
-    if (scroll) document.getElementById('qc-' + i)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (scroll) document.getElementById('qc-' + i)?.scrollIntoView({ block: 'start' }); // nhảy thẳng tới câu (không trượt dài gây chóng mặt)
     else drawSingle(dir);
     drawBottom();
   }
@@ -219,7 +241,7 @@ export async function renderExam(root, p) {
     const id = order[i];
     if (S.marked.has(id)) { S.marked.delete(id); persist({ marked: F.arrayRemove(id) }); }
     else { S.marked.add(id); persist({ marked: F.arrayUnion(id) }); }
-    paintCard(i);
+    paintCard(i); drawSub();
   }
   async function restart() {
     if (!(await confirmBox('Làm lại từ đầu? Các câu đã chọn sẽ bị xóa.', 'Bắt đầu lại'))) return;
@@ -293,6 +315,21 @@ export async function renderExam(root, p) {
     else if (act === 'next') goTo(S.cur + 1);
     else if (act === 'check') check();
     else if (act === 'finish') askSubmit();
+  });
+  $('#sub')?.addEventListener('click', (e) => {
+    const l = e.target.closest('[data-lay]'); if (l) return setLayout(l.dataset.lay === 'scroll');
+    const g = e.target.closest('[data-go]'); if (g) goTo(+g.dataset.go);
+  });
+  let ticking = false; // chế độ cả trang: kéo tới câu nào thì dải số câu sáng câu đó
+  main.addEventListener('scroll', () => {
+    if (!scroll || ticking) return; ticking = true;
+    requestAnimationFrame(() => {
+      ticking = false; const top = main.getBoundingClientRect().top + 24; let idx = S.cur;
+      const cards = main.querySelectorAll('.qcard');
+      for (let i = 0; i < cards.length; i++) { if (cards[i].getBoundingClientRect().top <= top) idx = i; else break; }
+      if (main.scrollTop + main.clientHeight >= main.scrollHeight - 4) idx = cards.length - 1; // kéo hết xuống cuối = câu cuối
+      if (idx !== S.cur) { S.cur = idx; drawSub(); }
+    });
   });
   $('#back').onclick = () => { toast('Bài làm đã được lưu, bạn có thể tiếp tục sau.', 'info'); go('/'); };
   const setZoom = (d) => { zi = Math.max(0, Math.min(ZOOMS.length - 1, zi + d)); store.set('quiz_zoom', zi); $('#exam').style.setProperty('--z', ZOOMS[zi]); $('#zout').disabled = zi === 0; $('#zin').disabled = zi === ZOOMS.length - 1; };
