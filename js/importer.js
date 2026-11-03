@@ -2,6 +2,7 @@
 import { rowsToQuestions, parseQuestionText, htmlToQuestionText, pdfItemsToLines, questionsToRows, questionsToPrintHtml, sampleQuestions, HEADERS } from './lib.js';
 import { readFile, downloadBlob, exportXlsx, safeName, toast } from './ui.js';
 import { buildQuestionsDocx, buildTemplateDocx, WORD_MIME } from './docx.js';
+import { docxToText } from './docxread.js';
 
 export async function parseFile(file) {
   const ext = file.name.split('.').pop().toLowerCase();
@@ -15,10 +16,14 @@ export async function parseFile(file) {
     return rowsToQuestions(Array.isArray(j) ? j : j.questions || []);
   }
   if (ext === 'docx') {
-    if (!window.mammoth) throw new Error('Thư viện đọc Word chưa tải xong (kiểm tra mạng).');
-    // convertToHtml giữ được chữ GẠCH CHÂN → đáp án đúng; các dòng có 2 đáp án (A. … B. …) cũng được tách
-    const r = await mammoth.convertToHtml({ arrayBuffer: await readFile(file) }, { styleMap: ['u => u'] });
-    return parseQuestionText(htmlToQuestionText(r.value));
+    const buf = await readFile(file);
+    try { return parseQuestionText(await docxToText(buf)); } // đọc trực tiếp: giữ công thức, gạch chân, thụt lề mã
+    catch (err) {
+      console.warn('Đọc .docx trực tiếp không được, thử cách dự phòng:', err.message);
+      if (!window.mammoth) throw err;
+      const r = await mammoth.convertToHtml({ arrayBuffer: buf }, { styleMap: ['u => u'] });
+      return parseQuestionText(htmlToQuestionText(r.value));
+    }
   }
   if (ext === 'pdf') {
     if (!window.pdfjsLib) throw new Error('Thư viện đọc PDF chưa tải xong (kiểm tra mạng).');

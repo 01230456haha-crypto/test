@@ -69,15 +69,28 @@ export function looksLikeCode(line) {
   return false;
 }
 /** Bọc các dòng mã liên tiếp (sau dòng đầu của đề) bằng ``` để hiển thị đúng thụt lề, không bị KaTeX/định dạng làm hỏng. */
+/** Cắt bớt phần thụt lề chung của các dòng (giữ thụt lề tương đối giữa các dòng). */
+export function dedent(text) {
+  const ls = String(text).split('\n'), ind = Math.min(...ls.filter((l) => l.trim()).map((l) => l.match(/^ */)[0].length));
+  return ind > 0 && isFinite(ind) ? ls.map((l) => l.slice(Math.min(ind, l.match(/^ */)[0].length))).join('\n') : String(text);
+}
 export function autoFenceCode(text) {
   const t = String(text || '');
   if (t.includes('```')) return t;
   const lines = t.split('\n'); if (lines.length < 2) return t;
   const out = [lines[0]]; let run = [];
-  const flush = () => { if (run.length) { out.push('```', ...run, '```'); run = []; } };
+  const flush = () => { if (run.length) { out.push('```', ...dedent(run.join('\n')).split('\n'), '```'); run = []; } };
   for (const l of lines.slice(1)) { if (looksLikeCode(l)) run.push(l); else { flush(); out.push(l); } }
   flush();
   return out.join('\n');
+}
+
+/** Đáp án gồm nhiều dòng mã (vd các đoạn for/if) → đóng khung mã để hiện đẹp, giữ thụt lề. */
+export function autoFenceBlock(text) {
+  const t = String(text || '');
+  if (t.includes('```') || !t.includes('\n')) return t;
+  const ls = t.split('\n').filter((l) => l.trim());
+  return ls.length >= 2 && ls.every(looksLikeCode) ? '```\n' + dedent(t.replace(/^\n+|\s+$/g, '')) + '\n```' : t;
 }
 
 /** Văn bản → HTML an toàn: khối mã ```...``` và `mã nội dòng`; còn lại giữ xuống dòng. */
@@ -154,7 +167,7 @@ export function finalize(items) {
     const label = it._row ? `Dòng ${it._row}` : `Câu thứ ${i + 1}`;
     const q = autoFenceCode(normalizeText(it.q).trim());
     const o = {};
-    KEYS.forEach((k) => (o[k] = normalizeText(it[k]).trim()));
+    KEYS.forEach((k) => (o[k] = autoFenceBlock(normalizeText(it[k]).replace(/^\n+/, '').replace(/\s+$/, ''))));
     const filled = KEYS.filter((k) => o[k]);
     if (!q && !filled.length) return; // dòng trống
     const ans = normalizeAnswer(it.ans);
@@ -208,15 +221,15 @@ export function htmlToQuestionText(html) {
 
 /** Phân tích văn bản dán từ Word: "Câu 1: … / A. … / Đáp án: B / Giải thích: …". Giữ nguyên thụt lề của mã nguồn (C++…). */
 export function parseQuestionText(text) {
-  const out = []; let cur = null, field = null, inFence = false; const keyPairs = [];
-  const reQ = /^\s*(?:câu|cau|question)\s*\d+\s*[:.)\-]?\s*(.*)$/i;
-  const reNum = /^\s*\d+\s*[.)]\s+(.*)$/;
+  const out = []; let cur = null, field = null, inFence = false, keyMode = false, finished = false; const keyPairs = [];
+  const reQ = /^\s*(?:câu|cau|question)\s*(\d+)\s*[:.)\-]?\s*(.*)$/i;
+  const reNum = /^\s*(\d+)\s*[.)]\s+(.*)$/;
   const reAns = /^\s*(?:đáp án|dap an|đ\/a|answer)(?:\s*đúng)?\s*[:：]?\s*(.*)$/i;
   const reExp = /^\s*(?:giải thích|giai thich|lời giải|loi giai|hướng dẫn giải|explanation)\s*[:：]?\s*(.*)$/i;
   const rePart = /^\s*PH[ẦA]N\s+[IVXLC\d]+\b/i;
   const lines = normalizeText(text).split('\n');
   const hasPrefix = lines.some((l) => reQ.test(l));
-  const start = (t) => { cur = { q: t, A: '', B: '', C: '', D: '', ans: '', exp: '' }; out.push(cur); field = 'q'; };
+  const start = (t, num) => { cur = { q: t, A: '', B: '', C: '', D: '', ans: '', exp: '', num: num ? +num : 0 }; out.push(cur); field = 'q'; };
   const add = (txt) => { cur[field] = (cur[field] ? cur[field] + '\n' : '') + txt; };
   for (const raw of lines) {
     const line = raw.trim();
@@ -225,6 +238,16 @@ export function parseQuestionText(text) {
     if (cur && inFence) { add(raw.replace(/\t/g, '    ').replace(/\s+$/, '')); continue; }
     if (!line) continue;
     let m;
+    // bảng đáp án cuối đề, mỗi đáp án một dòng: "ĐÁP ÁN" / "252. D" / "257. B" (số = số câu trong đề)
+    if (keyMode && cur && !cur.ans && /^[A-Da-d]$/.test(line)) { cur.ans = line.toUpperCase(); keyMode = false; continue; } // "Đáp án:" rồi đáp án ở dòng dưới
+    if (finished || keyMode) {
+      const ps = [...line.matchAll(/(?:câu\s*)?(\d{1,4})\s*[.\-:)]?\s*([A-Da-d])(?![A-Za-z\u00C0-\u1EF9])/gi)];
+      if (ps.length) { ps.forEach((p) => keyPairs.push([+p[1], p[2].toUpperCase()])); continue; }
+      if (finished) continue; // sau "HẾT": bỏ qua mọi thứ khác
+      keyMode = false;
+    }
+    if (/^\s*(?:hết|het|-{3,}|_{3,}|={3,})\s*$/i.test(line)) { finished = true; continue; }
+    if (/^\s*(?:bảng\s+)?(?:đáp án|dap an)\s*[:：]?\s*$/i.test(line)) { keyMode = true; continue; }
     if (rePart.test(line)) { cur = null; field = null; continue; } // tiêu đề phần: bỏ qua
     if (/đáp án|dap an|answer/i.test(line)) { // bảng đáp án cuối đề: "Đáp án: 1.A 2.B 3.C ..."
       const ps = [...line.matchAll(/(\d{1,3})\s*[.\-:)]?\s*([A-Da-d])(?![A-Za-z\u00C0-\u1EF9])/g)];
@@ -236,13 +259,13 @@ export function parseQuestionText(text) {
       const opts = splitOptions(line);
       if (opts) { opts.forEach((o) => { cur[o.key] = o.text; if (o.star) cur.ans = o.key; }); field = opts[opts.length - 1].key; continue; }
     }
-    if ((m = line.match(reQ))) { start(m[1]); continue; }
-    if ((m = line.match(reNum)) && (!hasPrefix || (cur && cur.ans && field === 'ans'))) { start(m[1]); continue; }
+    if ((m = line.match(reQ))) { start(m[2], m[1]); continue; }
+    if ((m = line.match(reNum)) && (!hasPrefix || (cur && cur.ans && field === 'ans'))) { start(m[2], m[1]); continue; }
     if (!cur) { if (!hasPrefix) start(line); continue; } // trước câu đầu tiên: bỏ qua lời dẫn nếu đề có "Câu N"
     if (field === 'ans') { if (!hasPrefix) start(line); continue; }
     add(looksLikeCode(line) ? raw.replace(/\t/g, '    ').replace(/\s+$/, '') : line); // dòng nối tiếp (mã nguồn giữ thụt lề)
   }
-  keyPairs.forEach(([n, a]) => { if (out[n - 1] && !out[n - 1].ans) out[n - 1].ans = a; });
+  keyPairs.forEach(([n, a]) => { const t = out.find((x) => x.num === n) || out[n - 1]; if (t && !t.ans) t.ans = a; }); // ưu tiên khớp số câu thật, không có thì theo thứ tự
   return finalize(out);
 }
 

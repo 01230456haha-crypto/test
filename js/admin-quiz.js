@@ -57,7 +57,7 @@ async function tabQuestions({ id, quiz, box }) {
   function card(x, i) {
     if (editing === x.id) return `<div class="qrow editing" data-id="${x.id}"><div class="qr-n">${i + 1}</div><div class="qr-b">${editForm(x)}</div></div>`;
     return `<div class="qrow" data-id="${x.id}"><div class="qr-n">${i + 1}</div><div class="qr-b"><div class="qr-q rt">${richText(x.q)}</div>
-      <div class="qr-o">${KEYS.filter((k) => x[k]).map((k) => `<span class="${k === x.ans ? 'ok' : ''}"><b>${k}</b> ${esc(x[k])}</span>`).join('')}</div>
+      <div class="qr-o">${KEYS.filter((k) => x[k]).map((k) => { const ml = /\n|```/.test(x[k]); return `<span class="${k === x.ans ? 'ok' : ''} ${ml ? 'ml' : ''}"><b>${k}</b> ${ml ? richText(x[k]) : esc(x[k])}</span>`; }).join('')}</div>
       ${x.exp ? `<div class="qr-e">${ic('sparkle', 13)} ${esc(x.exp)}</div>` : ''}</div>
       <div class="qr-a"><button class="btn icon ghost sm" data-act="up" title="Lên" ${i === 0 ? 'disabled' : ''}>${ic('left', 15).replace('<svg', '<svg style="transform:rotate(90deg)"')}</button>
         <button class="btn icon ghost sm" data-act="down" title="Xuống" ${i === qs.length - 1 ? 'disabled' : ''}>${ic('left', 15).replace('<svg', '<svg style="transform:rotate(-90deg)"')}</button>
